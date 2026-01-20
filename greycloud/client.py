@@ -34,6 +34,9 @@ class GreyCloudClient:
         `gcloud auth application-default login`. This may require user interaction
         (opening a browser) if credentials are not already cached.
         
+        In non-interactive environments (like web servers), this will attempt
+        to use the --no-browser flag, but may still require manual intervention.
+        
         Returns:
             bool: True if re-authentication succeeded, False otherwise
         """
@@ -46,13 +49,36 @@ class GreyCloudClient:
         
         import subprocess
         import sys
+        import os
         
         # Check if we're in an interactive environment (TTY available)
-        # If not, we can't do interactive login, but we'll try anyway
-        # as the user might have already authenticated in another session
-        is_interactive = sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else False
+        # Also check for DISPLAY variable (X11) or if we're in a terminal
+        is_interactive = (
+            (sys.stdin.isatty() if hasattr(sys.stdin, 'isatty') else False) or
+            os.environ.get('DISPLAY') is not None
+        )
         
         try:
+            # First, try to refresh existing credentials without user interaction
+            # This works if the user has already authenticated and just needs a refresh
+            try:
+                # Try to get a new token - this might refresh automatically
+                result = subprocess.run(
+                    ["gcloud", "auth", "application-default", "print-access-token"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                # If we can get a token, credentials might be valid
+                # But we still want to do a full login to ensure they're refreshed
+                if result.returncode == 0:
+                    # Credentials exist, but let's still do a login to refresh
+                    pass
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+                # Can't get token, need to do full login
+                pass
+            
             # Run gcloud auth application-default login to refresh credentials
             # Use --no-browser flag if not interactive to avoid hanging
             cmd = ["gcloud", "auth", "application-default", "login"]
@@ -60,6 +86,8 @@ class GreyCloudClient:
                 # In non-interactive mode, try to use existing credentials
                 # or fail gracefully
                 cmd.append("--no-browser")
+                # Also add --quiet to avoid prompts
+                cmd.append("--quiet")
             
             # For interactive environments, allow user interaction
             # For non-interactive, capture output to avoid hanging
@@ -68,7 +96,7 @@ class GreyCloudClient:
                 check=True,
                 capture_output=not is_interactive,  # Don't capture in interactive mode
                 text=True,
-                timeout=300 if is_interactive else 10  # Shorter timeout for non-interactive
+                timeout=300 if is_interactive else 30  # Shorter timeout for non-interactive
             )
             return result.returncode == 0
         except subprocess.TimeoutExpired:
@@ -76,11 +104,22 @@ class GreyCloudClient:
             # In non-interactive mode, this is a failure
             return is_interactive
         except subprocess.CalledProcessError as e:
-            # Re-authentication failed - check if it's because we're in non-interactive mode
-            error_output = (e.stderr or e.stdout or "").lower() if hasattr(e, 'stderr') else ""
+            # Re-authentication failed - check the error message
+            error_output = ""
+            if hasattr(e, 'stderr') and e.stderr:
+                error_output = e.stderr.lower()
+            if hasattr(e, 'stdout') and e.stdout:
+                error_output += " " + e.stdout.lower()
+            
+            # Check for specific error conditions
             if "no browser" in error_output or "non-interactive" in error_output:
                 # Can't do interactive login in this environment
+                # But we might still have valid credentials, so return False
+                # and let the caller handle it
                 return False
+            if "already has" in error_output or "already authenticated" in error_output:
+                # Already authenticated - this is actually success
+                return True
             # Other errors - return False to indicate failure
             return False
         except FileNotFoundError:
@@ -384,12 +423,19 @@ class GreyCloudClient:
         - Error messages containing authentication-related keywords
         """
         # Check for specific Google Auth exceptions
+        # Try both direct import and string-based checking for robustness
         try:
             from google.auth.exceptions import RefreshError, DefaultCredentialsError
             if isinstance(error, (RefreshError, DefaultCredentialsError)):
                 return True
         except ImportError:
-            pass
+            # If import fails, check by type name
+            error_type_name = type(error).__name__
+            if error_type_name in ('RefreshError', 'DefaultCredentialsError'):
+                # Check if it's from google.auth.exceptions by checking the module
+                error_module = type(error).__module__
+                if 'google.auth' in error_module or 'google.oauth2' in error_module:
+                    return True
         
         # Check for Google API Core exceptions
         try:
@@ -399,33 +445,56 @@ class GreyCloudClient:
         except ImportError:
             pass
         
-        # Check error message and string representation
-        error_str = str(error).lower()
-        error_repr = repr(error).lower()
-        error_type = type(error).__name__.lower()
-        combined_error = f"{error_str} {error_repr} {error_type}"
+        # Check the exception chain (in case it's wrapped)
+        current_error = error
+        error_chain = [current_error]
+        while hasattr(current_error, '__cause__') and current_error.__cause__:
+            current_error = current_error.__cause__
+            error_chain.append(current_error)
+        while hasattr(current_error, '__context__') and current_error.__context__:
+            current_error = current_error.__context__
+            error_chain.append(current_error)
         
-        auth_keywords = [
-            "401", "unauthorized",
-            "403", "forbidden",
-            "authentication",
-            "credential",
-            "token expired",
-            "token invalid",
-            "invalid token",
-            "expired token",
-            "unauthenticated",
-            "permission denied",
-            "reauth",
-            "reauthentication",
-            "application-default",
-            "gcloud auth application-default login",
-            "invalid_grant",  # OAuth error
-            "invalid_credentials",
-            "access_denied",
-            "insufficient_permission",
-        ]
-        return any(keyword in combined_error for keyword in auth_keywords)
+        # Check all errors in the chain
+        for err in error_chain:
+            # Check exception type name (works even if import fails)
+            error_type_name = type(err).__name__
+            if 'RefreshError' in error_type_name or 'DefaultCredentialsError' in error_type_name:
+                return True
+            if 'Unauthenticated' in error_type_name or 'PermissionDenied' in error_type_name:
+                return True
+        
+        # Check error message and string representation for all errors in chain
+        for err in error_chain:
+            error_str = str(err).lower()
+            error_repr = repr(err).lower()
+            error_type = type(err).__name__.lower()
+            combined_error = f"{error_str} {error_repr} {error_type}"
+            
+            auth_keywords = [
+                "401", "unauthorized",
+                "403", "forbidden",
+                "authentication",
+                "credential",
+                "token expired",
+                "token invalid",
+                "invalid token",
+                "expired token",
+                "unauthenticated",
+                "permission denied",
+                "reauth",
+                "reauthentication",
+                "application-default",
+                "gcloud auth application-default login",
+                "invalid_grant",  # OAuth error
+                "invalid_credentials",
+                "access_denied",
+                "insufficient_permission",
+            ]
+            if any(keyword in combined_error for keyword in auth_keywords):
+                return True
+        
+        return False
     
     def exponential_backoff_with_jitter(
         self,
@@ -475,24 +544,60 @@ class GreyCloudClient:
                     return self.generate_content(contents, **generate_kwargs)
             except Exception as e:
                 # Check if this is an authentication error and re-authenticate if needed
-                if self._is_authentication_error(e):
+                is_auth_error = self._is_authentication_error(e)
+                
+                if is_auth_error:
                     if self.config.auto_reauth and not self.config.use_api_key:
+                        # Force re-authentication by calling gcloud auth application-default login
+                        # This refreshes the credentials before recreating the client
+                        reauth_success = False
                         try:
-                            # Force re-authentication by calling gcloud auth application-default login
-                            # This refreshes the credentials before recreating the client
-                            self._authenticate(force_reauth=True)
-                            if attempt < max_retries:
+                            # Try to force re-authentication
+                            reauth_success = self._force_reauth()
+                            if reauth_success:
+                                # Recreate the client with fresh credentials
+                                self._authenticate(force_reauth=False)
+                            else:
+                                # Re-auth command failed, but try recreating client anyway
+                                # (credentials might have been refreshed externally)
+                                try:
+                                    self._authenticate(force_reauth=False)
+                                    reauth_success = True  # Client creation succeeded
+                                except Exception:
+                                    pass  # Will be handled below
+                            
+                            if reauth_success and attempt < max_retries:
                                 # Small delay before retry to ensure credentials are refreshed
                                 time.sleep(1)
                                 continue
+                            elif not reauth_success and attempt >= max_retries:
+                                # Re-auth failed and we're out of retries
+                                raise RuntimeError(
+                                    f"Authentication error detected and automatic re-authentication failed after {max_retries + 1} attempts. "
+                                    "Please run 'gcloud auth application-default login' manually to refresh your credentials. "
+                                    f"Original error: {str(e)}"
+                                ) from e
+                            elif not reauth_success:
+                                # Re-auth failed but we have retries left - continue to backoff
+                                # Credentials might be refreshed externally between retries
+                                pass
                         except Exception as auth_error:
                             if attempt >= max_retries:
                                 raise RuntimeError(
                                     f"Re-authentication failed after {max_retries + 1} attempts: {str(auth_error)}. "
-                                    "Please run 'gcloud auth application-default login' manually."
+                                    "Please run 'gcloud auth application-default login' manually. "
+                                    f"Original error: {str(e)}"
                                 ) from e
                             # If re-auth failed but we have retries left, continue to exponential backoff
                             # This allows the retry mechanism to potentially work if credentials refresh in the background
+                    else:
+                        # Auth error detected but auto_reauth is disabled or using API key
+                        if attempt >= max_retries:
+                            raise RuntimeError(
+                                f"Authentication error detected but auto_reauth is disabled. "
+                                "Please run 'gcloud auth application-default login' manually. "
+                                f"Original error: {str(e)}"
+                            ) from e
                 
                 if attempt >= max_retries:
                     raise
