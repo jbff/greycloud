@@ -22,17 +22,23 @@ class GreyCloudConfig:
     auto_reauth: bool = True
     
     # Model configuration
-    model: str = "gemini-3-pro-preview"
+    # Default to a generally available Gemini 3 flash model.
+    # You can override this per-request when calling GreyCloudClient.
+    model: str = "gemini-3-flash-preview"
     endpoint: str = "https://aiplatform.googleapis.com"
     api_version: str = "v1"
     
     # Generation parameters
     temperature: float = 1.0
     top_p: float = 0.95
-    seed: Optional[int] = 0
+    # When None, no seed is sent and the model behaves stochastically.
+    # Set an explicit integer here to make outputs more repeatable.
+    seed: Optional[int] = None
     max_output_tokens: int = 65535
     
     # Safety settings
+    # When None, Vertex AI's defaults are used.
+    # To explicitly control safety, pass a list of dicts or SafetySetting objects.
     safety_settings: Optional[List[Dict[str, Any]]] = None
     
     # System instruction
@@ -43,9 +49,12 @@ class GreyCloudConfig:
     use_vertex_ai_search: bool = False
     
     # Thinking config
-    thinking_level: Optional[str] = "HIGH"  # None, "LOW", "MEDIUM", "HIGH"
+    # When None, no thinking config is sent. Set to "LOW", "MEDIUM", or "HIGH"
+    # for models that support thinking.
+    thinking_level: Optional[str] = None  # None, "LOW", "MEDIUM", "HIGH"
     
     # Batch processing
+    # Buckets must now be configured explicitly when batch/GCS helpers are used.
     batch_gcs_bucket: Optional[str] = field(default_factory=lambda: os.environ.get("BATCH_GCS_BUCKET", None))
     batch_location: str = "global"  # Batch jobs require global location
     batch_poll_interval: int = 30
@@ -56,14 +65,14 @@ class GreyCloudConfig:
     def __post_init__(self):
         """Validate and set defaults after initialization"""
         if not self.project_id:
-            # Try to get from gcloud config
+            # Try to get from gcloud config as a convenience for local development.
             import subprocess
             try:
                 result = subprocess.run(
                     ["gcloud", "config", "get-value", "project"],
                     capture_output=True,
                     text=True,
-                    check=False
+                    check=False,
                 )
                 if result.returncode == 0 and result.stdout.strip() and result.stdout.strip() != "(unset)":
                     self.project_id = result.stdout.strip()
@@ -72,28 +81,7 @@ class GreyCloudConfig:
         
         if not self.project_id:
             raise ValueError(
-                "PROJECT_ID or GCP_PROJECT environment variable must be set, or gcloud must be configured. "
+                "PROJECT_ID or GCP_PROJECT environment variable must be set, or gcloud must be configured.\n"
                 "Example: export PROJECT_ID=your-project-id\n"
                 "Or run: gcloud config set project your-project-id"
             )
-        
-        # Set default batch bucket if not provided
-        if not self.batch_gcs_bucket:
-            self.batch_gcs_bucket = f"{self.project_id}-batch-jobs"
-        
-        # Set default GCS bucket if not provided
-        if not self.gcs_bucket:
-            self.gcs_bucket = self.batch_gcs_bucket
-        
-        # Set default safety settings if not provided
-        if self.safety_settings is None:
-            self.safety_settings = [
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF"},
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF"}
-            ]
-        
-        # Set default SA email if not provided but project_id is available
-        if not self.sa_email and self.project_id:
-            self.sa_email = f"vertex-search-client@{self.project_id}.iam.gserviceaccount.com"

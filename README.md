@@ -1,8 +1,81 @@
-# GreyCloud
+## GreyCloud
 
-A comprehensive, configurable Python package for interacting with Google's Vertex AI and GenAI services, including authentication, content generation, batch processing, and file management.
+A comprehensive, configurable Python package for interacting with Google's Vertex AI and GenAI services (Gemini), including authentication, content generation, batch processing, token counting, and file management.
 
-## Installation
+GreyCloud wraps the lower-level `google-genai` client with:
+
+- **Unified authentication** (API key or OAuth + optional service account impersonation)
+- **Resilient content generation** with automatic retry and re-authentication
+- **Config-driven client setup** via a single `GreyCloudConfig` dataclass
+- **Optional Vertex AI Search tools** for retrieval-augmented generation
+- **Batch helpers** for large offline jobs and GCS integration
+
+---
+
+## 1. What GreyCloud Does
+
+GreyCloud provides three main building blocks:
+
+- `GreyCloudConfig` – configuration object populated from environment variables or code
+- `GreyCloudClient` – high-level client for content generation, streaming, token counting, and retries
+- `GreyCloudBatch` – helper for batch jobs and GCS-backed workflows
+
+High-level capabilities:
+
+- **Content generation** (streaming and non-streaming) with per-request overrides
+- **Automatic retry** with exponential backoff and authentication-aware recovery
+- **Token counting** with graceful approximation fallback
+- **Vertex AI Search integration** via a simple flag and datastore string
+- **Batch processing** to upload files, create jobs, monitor, and download results
+
+---
+
+## 2. Why Use GreyCloud Instead of `google-genai` Directly?
+
+Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **developer ergonomics** and **resilience**:
+
+- **Unified auth helper**
+  - One function (`create_client` / `GreyCloudClient`) that:
+    - Uses Application Default Credentials when available
+    - Optionally impersonates a service account when `sa_email` is set
+    - Falls back to `gcloud auth print-access-token` when needed
+    - Supports API key authentication via a simple config flag
+  - Clear error messages that point to:
+    - `gcloud auth application-default login`
+    - IAM role requirements for impersonation
+
+- **Config normalization**
+  - A single dataclass (`GreyCloudConfig`) encapsulates:
+    - Project, location, endpoint, model
+    - Auth choices (API key vs OAuth + SA impersonation)
+    - Generation parameters (temperature, top_p, max_output_tokens, seed)
+    - Safety settings
+    - Thinking configuration
+    - Vertex AI Search datastore
+    - Batch/GCS bucket settings
+
+- **Resilient generation**
+  - `GreyCloudClient.generate_with_retry(...)`:
+    - Detects auth-related vs transient errors
+    - Performs exponential backoff with jitter
+    - Attempts re-authentication when appropriate (for OAuth-based flows)
+    - Re-creates the underlying `genai.Client` as needed
+
+- **Tools & Search wiring**
+  - Vertex AI Search is turned on with:
+    - `use_vertex_ai_search=True`
+    - `vertex_ai_search_datastore="projects/.../dataStores/..."`.
+  - GreyCloud constructs the appropriate `types.Tool` and wires it into calls.
+
+- **Batch utilities**
+  - `GreyCloudBatch` wraps the more verbose raw batch APIs:
+    - Handles JSONL creation
+    - Manages GCS paths and result locations
+    - Tries multiple model naming formats (`publishers/google/models/...` vs short name)
+
+---
+
+## 3. Installation
 
 ### Basic Installation
 
@@ -25,17 +98,18 @@ pip install -e ".[storage]"
 pip install -e ".[dev]"
 ```
 
-## Quick Start
+## 4. Quick Start: Basic Client and Single Call
 
 ```python
 from greycloud import GreyCloudConfig, GreyCloudClient
 from google.genai import types
 
-# Create configuration
+# Create configuration (override defaults as needed)
 config = GreyCloudConfig(
     project_id="your-project-id",
-    location="us-east4",
-    model="gemini-3-pro-preview"
+    location="us-central1",
+    # Default model is a Gemini 3 flash model; you can override if desired.
+    model="gemini-3-flash-preview",
 )
 
 # Create client
@@ -53,14 +127,203 @@ response = client.generate_content(contents)
 print(response.text)
 ```
 
-## Features
+---
 
-- **Unified Authentication**: Supports both API key and OAuth authentication with automatic re-authentication
-- **Content Generation**: Non-streaming and streaming content generation with configurable parameters
-- **Batch Processing**: Complete batch job workflow with GCS integration
-- **Token Counting**: Accurate token counting with fallback estimation
-- **Error Handling**: Automatic retry with exponential backoff
-- **Configuration Management**: Flexible configuration via code or environment variables
+## 5. Detailed Examples
+
+### 5.1 Creating a Client from Environment Only
+
+Environment:
+
+```bash
+export PROJECT_ID="your-project-id"
+export LOCATION="us-central1"
+```
+
+Code:
+
+```python
+from greycloud import GreyCloudClient
+from google.genai import types
+
+client = GreyCloudClient()  # GreyCloudConfig is created from env
+
+contents = [
+    types.Content(
+        role="user",
+        parts=[types.Part.from_text(text="Summarize the benefits of Vertex AI.")]
+    )
+]
+
+response = client.generate_content(contents)
+print(response.text)
+```
+
+### 5.2 Per-Request Overrides
+
+```python
+response = client.generate_content(
+    contents,
+    temperature=0.7,
+    max_output_tokens=1024,
+    system_instruction="You are a concise technical assistant.",
+)
+```
+
+### 5.3 Streaming Generation
+
+```python
+for chunk in client.generate_content_stream(contents):
+    print(chunk, end="", flush=True)
+```
+
+### 5.4 Automatic Retry & Auth Recovery
+
+```python
+from google.genai import types
+
+contents = [
+    types.Content(
+        role="user",
+        parts=[types.Part.from_text(text="Give me a short creative story about a robot therapist.")]
+    )
+]
+
+response = client.generate_with_retry(
+    contents,
+    max_retries=5,
+    streaming=False,
+)
+
+print(response.text)
+```
+
+For streaming with retry:
+
+```python
+for chunk in client.generate_with_retry(
+    contents,
+    max_retries=5,
+    streaming=True,
+):
+    print(chunk, end="", flush=True)
+```
+
+### 5.5 Token Counting with Fallback
+
+```python
+from google.genai import types
+
+contents = [
+    types.Content(
+        role="user",
+        parts=[types.Part.from_text(text="Count the tokens in this example message.")]
+    )
+]
+
+token_count = client.count_tokens(
+    contents,
+    system_instruction="You are a helpful assistant.",
+)
+
+print(f"Total tokens: {token_count}")
+```
+
+If the underlying API is unavailable, GreyCloud falls back to an approximate character-based count.
+
+### 5.6 Vertex AI Search as a Tool
+
+```python
+from greycloud import GreyCloudConfig, GreyCloudClient
+from google.genai import types
+
+config = GreyCloudConfig(
+    project_id="your-project-id",
+    location="us-central1",
+    use_vertex_ai_search=True,
+    vertex_ai_search_datastore=(
+        "projects/PROJECT_ID/locations/LOCATION/"
+        "collections/default_collection/dataStores/DATASTORE_ID"
+    ),
+)
+
+client = GreyCloudClient(config)
+
+contents = [
+    types.Content(
+        role="user",
+        parts=[types.Part.from_text(text="Using the knowledge base, explain the diagnostic steps for adult ASD.")]
+    )
+]
+
+response = client.generate_content(contents)
+print(response.text)
+```
+
+### 5.7 Batch Processing with GCS
+
+```python
+from greycloud import GreyCloudConfig, GreyCloudBatch
+from google.genai import types
+import json
+
+config = GreyCloudConfig(
+    project_id="your-project-id",
+    batch_gcs_bucket="your-project-batch-jobs",  # Must exist
+)
+
+batch = GreyCloudBatch(config)
+
+# Upload a couple of JSON docs
+files = [
+    {"name": "data1.json", "content": json.dumps({"key": "value"})},
+    {"name": "data2.json", "content": json.dumps({"key2": "value2"})},
+]
+
+file_uris = batch.upload_files_to_gcs(files)
+
+batch_requests = []
+for filename, gcs_uri in file_uris.items():
+    batch_requests.append(
+        types.InlinedRequest(
+            model=config.model,
+            contents=[
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": f"Analyze {filename}: "},
+                        {"file_data": {"file_uri": gcs_uri, "mime_type": "application/json"}},
+                    ],
+                }
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=65535,
+            ),
+        )
+    )
+
+batch_job = batch.create_batch_job(batch_requests)
+batch_job = batch.monitor_batch_job(batch_job)
+
+output_file = batch.download_batch_results(batch_job, "results.jsonl")
+print(f"Batch results saved to: {output_file}")
+```
+
+### 5.8 Custom Auth (Advanced)
+
+```python
+from greycloud.auth import create_client
+
+client = create_client(
+    project_id="your-project-id",
+    location="us-central1",
+    sa_email="service-account@project.iam.gserviceaccount.com",  # Optional
+    use_api_key=False,
+)
+```
+
+---
 
 ## Documentation
 
@@ -74,28 +337,7 @@ For detailed documentation, see [GREYCLOUD_USAGE.md](GREYCLOUD_USAGE.md).
 - `google-auth` package (for OAuth)
 - `google-cloud-storage` package (optional, for batch processing)
 
-## Configuration
-
-GreyCloud can be configured via code or environment variables:
-
-```python
-# Via code
-config = GreyCloudConfig(
-    project_id="your-project-id",
-    location="us-east4",
-    sa_email="service-account@project.iam.gserviceaccount.com",
-    use_api_key=False,
-    model="gemini-3-pro-preview"
-)
-```
-
-```bash
-# Via environment variables
-export PROJECT_ID="your-project-id"
-export LOCATION="us-east4"
-export SA_EMAIL="service-account@project.iam.gserviceaccount.com"
-export USE_API_KEY="0"
-```
+---
 
 ## Testing
 
@@ -113,7 +355,7 @@ pytest --cov=greycloud --cov-report=html
 
 ## License
 
-MIT License
+MIT License (see `LICENSE` file).
 
 ## Contributing
 

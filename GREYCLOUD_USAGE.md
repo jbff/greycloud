@@ -2,11 +2,17 @@
 
 ## Overview
 
-GreyCloud is a reusable, configurable Python module for interacting with Google's Vertex AI and GenAI services. It provides a unified interface for authentication, content generation, batch processing, and file management.
+GreyCloud is a reusable, configurable Python module for interacting with Google's Vertex AI and GenAI services. It provides a unified interface for authentication, content generation, batch processing, and file management on top of the `google-genai` client.
 
 ## Installation
 
-GreyCloud requires the following dependencies:
+GreyCloud itself declares its core dependencies in `pyproject.toml`. To use all features, you typically need:
+
+```bash
+pip install greycloud[storage]  # includes google-genai, google-auth, google-cloud-storage
+```
+
+If you prefer installing dependencies manually:
 
 ```bash
 pip install google-genai google-auth google-cloud-storage
@@ -21,8 +27,9 @@ from google.genai import types
 # Create configuration
 config = GreyCloudConfig(
     project_id="your-project-id",
-    location="us-east4",
-    model="gemini-3-pro-preview"
+    location="us-central1",
+    # Default model is a Gemini 3 flash model; you can override if desired.
+    model="gemini-3-flash-preview",
 )
 
 # Create client
@@ -50,24 +57,24 @@ The `GreyCloudConfig` class provides comprehensive configuration options:
 
 ```python
 config = GreyCloudConfig(
-    project_id="your-project-id",  # Required
-    location="us-east4",            # Default: "us-east4"
+    project_id="your-project-id",  # Required (or resolved from gcloud)
+    location="us-central1",        # Default: "us-east4" if LOCATION/GCP_LOCATION unset
 )
 ```
 
 #### Authentication
 
 ```python
-# Option 1: OAuth with service account impersonation (default)
+# Option 1: OAuth with optional service account impersonation (recommended)
 config = GreyCloudConfig(
-    sa_email="service-account@project.iam.gserviceaccount.com",
-    use_api_key=False
+    sa_email="service-account@project.iam.gserviceaccount.com",  # Optional
+    use_api_key=False,
 )
 
 # Option 2: API key authentication
 config = GreyCloudConfig(
     use_api_key=True,
-    api_key_file="GOOGLE_CLOUD_API_KEY"  # Path to file containing API key
+    api_key_file="GOOGLE_CLOUD_API_KEY",  # Path to file containing API key
 )
 ```
 
@@ -75,9 +82,9 @@ config = GreyCloudConfig(
 
 ```python
 config = GreyCloudConfig(
-    model="gemini-3-pro-preview",  # Model name
+    model="gemini-3-flash-preview",  # Default text model
     endpoint="https://aiplatform.googleapis.com",  # API endpoint
-    api_version="v1"  # API version
+    api_version="v1",  # API version
 )
 ```
 
@@ -87,7 +94,7 @@ config = GreyCloudConfig(
 config = GreyCloudConfig(
     temperature=1.0,           # Default: 1.0
     top_p=0.95,                # Default: 0.95
-    seed=0,                    # Default: 0 (None to disable)
+    seed=None,                 # Default: None (no fixed seed)
     max_output_tokens=65535,   # Default: 65535
 )
 ```
@@ -95,13 +102,22 @@ config = GreyCloudConfig(
 #### Safety Settings
 
 ```python
+# When safety_settings is None (the default), Vertex AI uses its own defaults.
+config = GreyCloudConfig(
+    safety_settings=None,
+)
+
+# To explicitly control safety:
 config = GreyCloudConfig(
     safety_settings=[
-        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "OFF"},
-        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "OFF"},
-        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "OFF"},
-        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "OFF"}
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
     ]
+)
+
+# Passing an empty list [] will send an explicit empty safety_settings list.
+config = GreyCloudConfig(
+    safety_settings=[],
 )
 ```
 
@@ -126,7 +142,7 @@ config = GreyCloudConfig(
 
 ```python
 config = GreyCloudConfig(
-    thinking_level="HIGH"  # Options: None, "LOW", "MEDIUM", "HIGH"
+    thinking_level=None  # Default: None; or "LOW", "MEDIUM", "HIGH" for supported models
 )
 ```
 
@@ -134,9 +150,9 @@ config = GreyCloudConfig(
 
 ```python
 config = GreyCloudConfig(
-    batch_gcs_bucket="your-project-batch-jobs",  # GCS bucket for batch jobs
-    batch_location="global",  # Batch jobs require global location
-    batch_poll_interval=30  # Polling interval in seconds
+    batch_gcs_bucket="your-project-batch-jobs",  # GCS bucket for batch jobs (must exist)
+    batch_location="global",                     # Batch jobs require global location
+    batch_poll_interval=30,                      # Polling interval in seconds
 )
 ```
 
@@ -146,7 +162,7 @@ GreyCloud can also be configured via environment variables:
 
 ```bash
 export PROJECT_ID="your-project-id"
-export LOCATION="us-east4"
+export LOCATION="us-central1"
 export SA_EMAIL="service-account@project.iam.gserviceaccount.com"
 export USE_API_KEY="0"  # "1" to use API key, "0" for OAuth
 export API_KEY_FILE="GOOGLE_CLOUD_API_KEY"

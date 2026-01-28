@@ -223,27 +223,33 @@ class GreyCloudClient:
         final_thinking_level = thinking_level if thinking_level is not None else self.config.thinking_level
         
         # Build safety settings
-        safety_settings_list = []
-        if final_safety_settings:
+        # None  -> omit from config, letting Vertex defaults apply.
+        # []    -> send an explicit empty list.
+        # list  -> convert dicts to SafetySetting as needed.
+        safety_settings_list = None
+        if final_safety_settings is not None:
+            safety_settings_list = []
             for setting in final_safety_settings:
                 if isinstance(setting, dict):
                     safety_settings_list.append(
                         types.SafetySetting(
                             category=setting["category"],
-                            threshold=setting["threshold"]
+                            threshold=setting["threshold"],
                         )
                     )
                 else:
                     safety_settings_list.append(setting)
         
         # Build config dict
-        config_dict = {
+        config_dict: Dict[str, Any] = {
             "temperature": final_temperature,
             "top_p": final_top_p,
             "max_output_tokens": final_max_output_tokens,
-            "safety_settings": safety_settings_list,
             "tools": final_tools,
         }
+        
+        if safety_settings_list is not None:
+            config_dict["safety_settings"] = safety_settings_list
         
         # Add seed if configured
         if self.config.seed is not None:
