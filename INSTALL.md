@@ -7,17 +7,14 @@
 To install GreyCloud in development mode (editable install):
 
 ```bash
-# Basic installation
+# Basic installation (with runtime deps)
 pip install -e .
-
-# With GCS support
-pip install -e ".[storage]"
 
 # With development dependencies
 pip install -e ".[dev]"
 
-# Everything
-pip install -e ".[storage,dev]"
+# Everything (runtime + dev extras)
+pip install -e ".[all]"
 ```
 
 ### Building a Distribution
@@ -50,20 +47,17 @@ pip install dist/greycloud-1.0.0.tar.gz
 
 ```bash
 # Install directly from git
-pip install git+https://github.com/yourusername/greycloud.git
+pip install git+https://github.com/jbff/greycloud.git
 
 # Install with specific branch/tag
-pip install git+https://github.com/yourusername/greycloud.git@v1.0.0
-
-# Install with extras
-pip install "git+https://github.com/yourusername/greycloud.git#egg=greycloud[storage]"
+pip install git+https://github.com/jbff/greycloud.git@v0.1.0
 ```
 
 ## Development Setup
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/greycloud.git
+git clone https://github.com/jbff/greycloud.git
 cd greycloud
 ```
 
@@ -75,7 +69,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 3. Install in development mode:
 ```bash
-pip install -e ".[storage,dev]"
+pip install -e ".[dev]"
 ```
 
 4. Run tests:

@@ -83,18 +83,11 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
 pip install greycloud
 ```
 
-### With GCS Support (for batch processing)
-
-```bash
-pip install greycloud[storage]
-```
-
 ### Development Installation
 
 ```bash
-git clone https://github.com/yourusername/greycloud.git
+git clone https://github.com/jbff/greycloud.git
 cd greycloud
-pip install -e ".[storage]"
 pip install -e ".[dev]"
 ```
 
@@ -327,7 +320,9 @@ client = create_client(
 
 ## Documentation
 
-For detailed documentation, see [GREYCLOUD_USAGE.md](GREYCLOUD_USAGE.md).
+All usage and configuration details are documented in this `README.md`. For additional examples, see:
+
+- `examples/simple.py` – minimal content-generation script.
 
 ## Requirements
 

@@ -52,10 +52,10 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/greycloud"
-Documentation = "https://github.com/yourusername/greycloud#readme"
-Repository = "https://github.com/yourusername/greycloud"
-Issues = "https://github.com/yourusername/greycloud/issues"
+Homepage = "https://github.com/jbff/greycloud"
+Documentation = "https://github.com/jbff/greycloud#readme"
+Repository = "https://github.com/jbff/greycloud"
+Issues = "https://github.com/jbff/greycloud/issues"
 
 [tool.setuptools]
 packages = ["greycloud"]

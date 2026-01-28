@@ -19,7 +19,7 @@ This document summarizes the conversion of GreyCloud into a pip-installable Pyth
 
 ### 2. Documentation
 
-- **`README.md`**: Main package documentation with quick start guide
+- **`README.md`**: Main package documentation with quick start guide and usage examples
 - **`INSTALL.md`**: Detailed installation instructions
 - **`TESTING.md`**: Comprehensive testing guide
 - **`PACKAGE_SUMMARY.md`**: This file
@@ -106,11 +106,9 @@ greycloud/
 ├── MANIFEST.in             # Package manifest
 ├── requirements.txt        # Runtime dependencies
 ├── requirements-dev.txt    # Dev dependencies
-├── README.md               # Main documentation
+├── README.md               # Main documentation & usage
 ├── INSTALL.md              # Installation guide
 ├── TESTING.md              # Testing guide
-├── GREYCLOUD_USAGE.md      # Usage documentation
-├── GREYCLOUD_MIGRATION.md  # Migration guide
 └── .gitignore              # Updated for Python package
 ```
 
@@ -119,18 +117,15 @@ greycloud/
 ### Development Installation
 
 ```bash
-# Install in editable mode with all dependencies
-pip install -e ".[storage,dev]"
+# Install in editable mode with development dependencies
+pip install -e ".[dev]"
 ```
 
 ### Production Installation
 
 ```bash
-# Basic installation
+# Basic installation with runtime dependencies
 pip install .
-
-# With GCS support
-pip install ".[storage]"
 ```
 
 ### From Local Directory
@@ -138,9 +133,6 @@ pip install ".[storage]"
 ```bash
 # In another project's virtual environment
 pip install /path/to/greycloud
-
-# Or with extras
-pip install "/path/to/greycloud[storage]"
 ```
 
 ## Testing
