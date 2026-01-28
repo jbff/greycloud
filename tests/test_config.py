@@ -58,11 +58,13 @@ class TestGreyCloudConfig:
             mock_run.return_value.stdout = "test-project"
             config = GreyCloudConfig(project_id="test-project")
             
-            assert config.model == "gemini-3-pro-preview"
+            # Defaults
+            assert config.model == "gemini-3-flash-preview"
             assert config.temperature == 1.0
             assert config.top_p == 0.95
             assert config.max_output_tokens == 65535
-            assert config.seed == 0
+            # Seed defaults to None (no fixed seed)
+            assert config.seed is None
             assert config.auto_reauth is True
             assert config.batch_location == "global"
             assert config.batch_poll_interval == 30
@@ -90,17 +92,14 @@ class TestGreyCloudConfig:
                     GreyCloudConfig()
     
     def test_config_safety_settings_default(self):
-        """Test default safety settings"""
+        """Default safety settings should defer to Vertex defaults (None)"""
         import subprocess
         with patch.object(subprocess, 'run') as mock_run:
             mock_run.return_value.returncode = 0
             config = GreyCloudConfig(project_id="test-project")
             
-            assert config.safety_settings is not None
-            assert len(config.safety_settings) == 4
-            categories = [s["category"] for s in config.safety_settings]
-            assert "HARM_CATEGORY_HATE_SPEECH" in categories
-            assert "HARM_CATEGORY_DANGEROUS_CONTENT" in categories
+            # When not provided, we leave safety_settings as None so Vertex uses its defaults.
+            assert config.safety_settings is None
     
     def test_config_custom_safety_settings(self):
         """Test custom safety settings"""
@@ -118,15 +117,17 @@ class TestGreyCloudConfig:
             
             assert config.safety_settings == custom_settings
     
-    def test_config_batch_bucket_default(self):
-        """Test default batch bucket name"""
+    def test_config_batch_bucket_from_env(self):
+        """Test batch bucket configured from environment"""
         import subprocess
-        with patch.object(subprocess, 'run') as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(project_id="test-project")
+        with patch.dict(os.environ, {"BATCH_GCS_BUCKET": "env-batch-bucket"}):
+            with patch.object(subprocess, 'run') as mock_run:
+                mock_run.return_value.returncode = 0
+                config = GreyCloudConfig(project_id="test-project")
             
-            assert config.batch_gcs_bucket == "test-project-batch-jobs"
-            assert config.gcs_bucket == "test-project-batch-jobs"
+            assert config.batch_gcs_bucket == "env-batch-bucket"
+            # gcs_bucket is independent and defaults to None unless explicitly set
+            assert config.gcs_bucket is None
     
     def test_config_custom_batch_bucket(self):
         """Test custom batch bucket name"""
@@ -141,14 +142,23 @@ class TestGreyCloudConfig:
             assert config.batch_gcs_bucket == "custom-batch-bucket"
     
     def test_config_default_sa_email(self):
-        """Test default service account email"""
+        """By default, sa_email should be None unless explicitly provided"""
         import subprocess
         with patch.object(subprocess, 'run') as mock_run:
             mock_run.return_value.returncode = 0
             config = GreyCloudConfig(project_id="test-project")
             
-            expected_email = "vertex-search-client@test-project.iam.gserviceaccount.com"
-            assert config.sa_email == expected_email
+            assert config.sa_email is None
+
+    def test_config_sa_email_from_env(self):
+        """Test service account email coming from environment"""
+        import subprocess
+        with patch.dict(os.environ, {"SA_EMAIL": "env-sa@project.iam.gserviceaccount.com"}):
+            with patch.object(subprocess, 'run') as mock_run:
+                mock_run.return_value.returncode = 0
+                config = GreyCloudConfig(project_id="test-project")
+            
+            assert config.sa_email == "env-sa@project.iam.gserviceaccount.com"
     
     def test_config_use_api_key_from_env(self):
         """Test use_api_key from environment variable"""

@@ -80,6 +80,63 @@ pytest --durations=10
 - `test_batch.py` - Tests for `GreyCloudBatch` class
 - `test_init.py` - Tests for package initialization
 
+### What Passing Tests Mean
+
+When all tests pass, you can be confident that:
+
+- **Configuration (`GreyCloudConfig`)**
+  - Reads configuration correctly from environment variables and explicit arguments
+  - Applies sane defaults for model, temperature, top_p, max_output_tokens
+  - Leaves safety settings as `None` by default (Vertex uses its own defaults)
+  - Does **not** auto-generate service account emails or GCS buckets
+  - Validates that a project ID is available (env or `gcloud config`)
+
+- **Authentication (`greycloud.auth`)**
+  - Correctly chooses between API key and OAuth-based authentication
+  - Uses service account impersonation when `sa_email` is provided
+  - Falls back to `gcloud auth application-default login` when appropriate (mocked)
+  - Surfaces clear, actionable errors when authentication fails
+
+- **Client (`GreyCloudClient`)**
+  - Builds `GenerateContentConfig` correctly from config and per-call overrides
+  - Handles safety settings and seed behavior as designed
+  - Implements streaming and non-streaming generation flows against a mocked client
+  - Implements token counting and approximate fallback when the API fails
+  - Implements `generate_with_retry` with exponential backoff and auth-aware retries
+
+- **Batch (`GreyCloudBatch`)**
+  - Uploads files/content to GCS using a mocked storage client
+  - Builds and uploads JSONL batch request files correctly
+  - Creates batch jobs using the correct model and GCS locations (mocked)
+  - Monitors jobs and downloads results with sane error handling
+
+- **Package Initialization**
+  - Exposes the expected symbols (`GreyCloudConfig`, `GreyCloudClient`, `GreyCloudBatch`)
+  - Keeps the version string in sync with `pyproject.toml`
+
+### What Passing Tests Do *Not* Guarantee
+
+Even with 100% pass rate, note the following limitations:
+
+- **No real network calls**
+  - All Google Cloud and Vertex AI interactions are mocked.
+  - Tests do **not** verify your credentials, IAM permissions, or actual model responses.
+
+- **No real GCS or Batch jobs**
+  - `google-cloud-storage` and batch APIs are mocked.
+  - Tests do not create real buckets, files, or batch jobs in your project.
+
+- **No end-to-end latency or quota behavior**
+  - Retries and backoff are tested for control flow, not for real-world timing or quota limits.
+
+- **No guarantees about specific model outputs**
+  - Tests ensure requests are constructed correctly and methods behave as expected.
+  - They do **not** assert on the semantic quality or stability of Gemini responses.
+
+- **No coverage of future API changes**
+  - If Google changes the behavior or required fields of `google-genai` or Vertex AI APIs,
+    code may need updates even if the current tests pass.
+
 ### Fixtures
 
 Common fixtures are defined in `conftest.py`:
