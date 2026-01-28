@@ -7,7 +7,8 @@ name = "greycloud"
 version = "0.1.0"
 description = "Reusable Google GenAI/Vertex AI Client Module"
 readme = "README.md"
-requires-python = ">=3.8"
+# google-genai >= 1.48.0 requires Python >= 3.10.
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "GreyCloud Contributors"}
@@ -18,8 +19,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -28,7 +27,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "google-genai>=0.2.0",
+    # Use a modern google-genai that aligns with Python >= 3.10.
+    "google-genai>=1.59.0",
     "google-auth>=2.0.0",
 ]
 
