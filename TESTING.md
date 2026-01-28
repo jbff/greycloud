@@ -195,7 +195,7 @@ jobs:
       - uses: actions/checkout@v2
       - uses: actions/setup-python@v2
         with:
-          python-version: '3.8'
+          python-version: '3.10'
       - run: pip install -e ".[dev]"
       - run: pytest --cov=greycloud --cov-report=xml
       - uses: codecov/codecov-action@v2
