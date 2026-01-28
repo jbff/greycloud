@@ -633,6 +633,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "google-auth" },
+    { name = "google-cloud-storage" },
     { name = "google-genai" },
     { name = "pytest" },
 ]
@@ -669,6 +670,7 @@ requires-dist = [
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.0.0" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "google-auth", specifier = ">=2.0.0" },
+    { name = "google-cloud-storage", specifier = ">=3.8.0" },
     { name = "google-cloud-storage", marker = "extra == 'storage'", specifier = ">=2.0.0" },
     { name = "google-genai", specifier = ">=1.59.0" },
     { name = "greycloud", extras = ["storage", "dev"], marker = "extra == 'all'" },

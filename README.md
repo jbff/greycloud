@@ -331,11 +331,11 @@ For detailed documentation, see [GREYCLOUD_USAGE.md](GREYCLOUD_USAGE.md).
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.10+
 - Google Cloud Project with Vertex AI enabled
-- `google-genai` package
-- `google-auth` package (for OAuth)
-- `google-cloud-storage` package (optional, for batch processing)
+- `google-genai` package (installed with `greycloud`)
+- `google-auth` package (installed with `greycloud`, for OAuth)
+- `google-cloud-storage` package (installed with `greycloud`; only needed if you use batch/GCS helpers)
 
 ---
 
