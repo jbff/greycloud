@@ -30,6 +30,7 @@ dependencies = [
     # Use a modern google-genai that aligns with Python >= 3.10.
     "google-genai>=1.59.0",
     "google-auth>=2.0.0",
+    "pytest>=9.0.2",
 ]
 
 [project.optional-dependencies]

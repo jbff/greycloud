@@ -15,6 +15,9 @@ try:
     from google.cloud import storage
     GCS_AVAILABLE = True
 except ImportError:
+    # Keep a storage name available for tests to patch, even when the
+    # google-cloud-storage package is not installed.
+    storage = None  # type: ignore[assignment]
     GCS_AVAILABLE = False
 
 from .config import GreyCloudConfig
