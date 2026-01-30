@@ -255,6 +255,8 @@ print(response.text)
 
 ### 5.7 Batch Processing with GCS
 
+Batch jobs use a GCS bucket for request input and result output. Set `batch_gcs_bucket` (and optionally `gcs_bucket` for general uploads). The batch API expects JSONL input: one line per request, each line a JSON object with a `request` key containing `model`, `contents`, and optional `config`/`metadata`. Results are written by Vertex to `predictions.jsonl` under the job’s destination prefix; `download_batch_results` finds and downloads that file.
+
 ```python
 from greycloud import GreyCloudConfig, GreyCloudBatch
 from google.genai import types
@@ -262,18 +264,18 @@ import json
 
 config = GreyCloudConfig(
     project_id="your-project-id",
-    batch_gcs_bucket="your-project-batch-jobs",  # Must exist
+    batch_gcs_bucket="your-project-batch-jobs",  # Must exist; used for batch I/O
 )
 
 batch = GreyCloudBatch(config)
 
-# Upload a couple of JSON docs
+# Upload a couple of JSON docs (use same bucket via bucket_name)
 files = [
     {"name": "data1.json", "content": json.dumps({"key": "value"})},
     {"name": "data2.json", "content": json.dumps({"key2": "value2"})},
 ]
 
-file_uris = batch.upload_files_to_gcs(files)
+file_uris = batch.upload_files_to_gcs(files, bucket_name=config.batch_gcs_bucket)
 
 batch_requests = []
 for filename, gcs_uri in file_uris.items():

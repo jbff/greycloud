@@ -354,11 +354,13 @@ class GreyCloudBatch:
                 batch_job = self.batch_client.batches.create(
                     model=model_format,
                     src=types.BatchJobSource(
-                        gcsUri=[gcs_uri]
+                        gcs_uri=[gcs_uri],
+                        format="jsonl",
                     ),
                     config=types.CreateBatchJobConfig(
                         dest=types.BatchJobDestination(
-                            gcsUri=results_gcs_uri
+                            gcs_uri=results_gcs_uri,
+                            format="jsonl",
                         )
                     )
                 )

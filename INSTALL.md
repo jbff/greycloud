@@ -29,18 +29,18 @@ pip install build
 python -m build
 
 # This creates:
-# - dist/greycloud-1.0.0.tar.gz (source distribution)
-# - dist/greycloud-1.0.0-py3-none-any.whl (wheel)
+# - dist/greycloud-0.1.0.tar.gz (source distribution)
+# - dist/greycloud-0.1.0-py3-none-any.whl (wheel)
 ```
 
 ### Installing from Built Distribution
 
 ```bash
 # From wheel (recommended)
-pip install dist/greycloud-1.0.0-py3-none-any.whl
+pip install dist/greycloud-0.1.0-py3-none-any.whl
 
 # From source distribution
-pip install dist/greycloud-1.0.0.tar.gz
+pip install dist/greycloud-0.1.0.tar.gz
 ```
 
 ### Installing from Git Repository

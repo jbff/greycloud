@@ -106,9 +106,9 @@ When all tests pass, you can be confident that:
 
 - **Batch (`GreyCloudBatch`)**
   - Uploads files/content to GCS using a mocked storage client
-  - Builds and uploads JSONL batch request files correctly
+  - Builds and uploads JSONL batch request files in the format expected by scripts and Vertex: one line per request, each line a JSON object with a `request` key containing `model`, `contents`, and optional `config`/`metadata`
   - Creates batch jobs using the correct model and GCS locations (mocked)
-  - Monitors jobs and downloads results with sane error handling
+  - Monitors jobs and downloads results; result download looks for `predictions.jsonl` under the job destination prefix
 
 - **Package Initialization**
   - Exposes the expected symbols (`GreyCloudConfig`, `GreyCloudClient`, `GreyCloudBatch`)

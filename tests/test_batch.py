@@ -181,6 +181,18 @@ class TestGreyCloudBatch:
     
     @pytest.mark.batch
     @patch('greycloud.batch.GCS_AVAILABLE', True)
+    def test_upload_files_to_gcs_missing_bucket(self):
+        """Test error when bucket not provided and config.gcs_bucket is None"""
+        config = GreyCloudConfig(project_id="test-project")  # no gcs_bucket
+        with patch('greycloud.batch.create_client') as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch('greycloud.batch.storage'):
+                batch = GreyCloudBatch(config)
+                with pytest.raises(ValueError, match="bucket_name must be provided or set in config.gcs_bucket"):
+                    batch.upload_files_to_gcs(files=[{"name": "x", "content": "y"}])
+
+    @pytest.mark.batch
+    @patch('greycloud.batch.GCS_AVAILABLE', True)
     def test_upload_files_to_gcs(self, sample_config):
         """Test multiple file upload"""
         files = [
@@ -242,10 +254,19 @@ class TestGreyCloudBatch:
                 assert gcs_uri.startswith("gs://test-bucket/batch_requests/")
                 mock_blob.upload_from_string.assert_called_once()
                 
-                # Verify JSONL format
+                # Verify JSONL format matches scripts that consume it: one line per request,
+                # each line a JSON object with "request" containing model, contents, optional config
                 call_args = mock_blob.upload_from_string.call_args
                 uploaded_content = call_args[0][0]
                 assert uploaded_content.startswith('{"request":')
+                lines = uploaded_content.strip().split("\n")
+                assert len(lines) == 1
+                obj = json.loads(lines[0])
+                assert "request" in obj
+                req = obj["request"]
+                assert "model" in req
+                assert "contents" in req
+                assert req["model"] == "gemini-3-pro-preview"
     
     @pytest.mark.batch
     @patch('greycloud.batch.GCS_AVAILABLE', True)
