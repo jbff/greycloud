@@ -193,8 +193,9 @@ class TestGreyCloudClient:
     
     def test_build_generate_config_with_safety_settings(self, sample_config):
         """Test GenerateContentConfig with safety settings"""
+        # Use a threshold valid in google-genai (BLOCK_MEDIUM_AND_ABOVE, not deprecated BLOCK_MEDIUM)
         safety_settings = [
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM"}
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}
         ]
         
         with patch('greycloud.client.create_client') as mock_create:

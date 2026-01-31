@@ -105,7 +105,7 @@ class TestGreyCloudConfig:
         """Test custom safety settings"""
         import subprocess
         custom_settings = [
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM"}
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}
         ]
         
         with patch.object(subprocess, 'run') as mock_run:

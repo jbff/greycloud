@@ -635,7 +635,6 @@ dependencies = [
     { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "google-genai" },
-    { name = "pytest" },
 ]
 
 [package.optional-dependencies]
@@ -671,12 +670,11 @@ requires-dist = [
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "google-auth", specifier = ">=2.0.0" },
     { name = "google-cloud-storage", specifier = ">=3.8.0" },
-    { name = "google-cloud-storage", marker = "extra == 'storage'", specifier = ">=2.0.0" },
+    { name = "google-cloud-storage", marker = "extra == 'storage'", specifier = ">=3.8.0" },
     { name = "google-genai", specifier = ">=1.59.0" },
     { name = "greycloud", extras = ["storage", "dev"], marker = "extra == 'all'" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0.0" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.10.0" },

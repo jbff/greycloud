@@ -73,6 +73,10 @@ addopts = [
     "--strict-markers",
     "--tb=short",
 ]
+filterwarnings = [
+    # google-genai uses _UnionGenericAlias (deprecated in Python 3.17); ignore in their code
+    "ignore::DeprecationWarning:google.genai.types",
+]
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
