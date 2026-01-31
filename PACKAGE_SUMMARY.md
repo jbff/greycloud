@@ -26,8 +26,7 @@ This document summarizes the conversion of GreyCloud into a pip-installable Pyth
 
 ### 3. Dependency Management
 
-- **`requirements.txt`**: Core runtime dependencies
-- **`requirements-dev.txt`**: Development dependencies including testing tools
+Dependencies are defined only in **`pyproject.toml`** (no separate requirements files). Install with `pip install .` or `pip install -e ".[dev]"` for dev extras.
 
 ### 4. Test Suite
 
@@ -101,11 +100,9 @@ greycloud/
 │   ├── test_client.py
 │   ├── test_config.py
 │   └── test_init.py
-├── pyproject.toml          # Package configuration
+├── pyproject.toml          # Package configuration (dependencies live here)
 ├── setup.py                # Backward compatibility
 ├── MANIFEST.in             # Package manifest
-├── requirements.txt        # Runtime dependencies
-├── requirements-dev.txt    # Dev dependencies
 ├── README.md               # Main documentation & usage
 ├── INSTALL.md              # Installation guide
 ├── TESTING.md              # Testing guide
