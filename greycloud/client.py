@@ -210,6 +210,7 @@ class GreyCloudClient:
         safety_settings: Optional[List[Dict[str, Any]]] = None,
         tools: Optional[List[types.Tool]] = None,
         thinking_level: Optional[str] = None,
+        cached_content: Optional[str] = None,
         **kwargs
     ) -> types.GenerateContentConfig:
         """Build GenerateContentConfig from parameters and config"""
@@ -263,9 +264,13 @@ class GreyCloudClient:
         if final_thinking_level:
             config_dict["thinking_config"] = types.ThinkingConfig(thinking_level=final_thinking_level)
         
+        # Add cached content reference if provided
+        if cached_content:
+            config_dict["cached_content"] = cached_content
+
         # Add any additional kwargs
         config_dict.update(kwargs)
-        
+
         return types.GenerateContentConfig(**config_dict)
     
     def generate_content(
@@ -279,11 +284,12 @@ class GreyCloudClient:
         safety_settings: Optional[List[Dict[str, Any]]] = None,
         tools: Optional[List[types.Tool]] = None,
         thinking_level: Optional[str] = None,
+        cached_content: Optional[str] = None,
         **kwargs
     ) -> types.GenerateContentResponse:
         """
         Generate content (non-streaming)
-        
+
         Args:
             contents: List of Content objects representing conversation history
             model: Model name (defaults to config.model)
@@ -294,8 +300,9 @@ class GreyCloudClient:
             safety_settings: Safety settings override
             tools: Tools override
             thinking_level: Thinking level override
+            cached_content: Cache name to use for context (see GreyCloudCache)
             **kwargs: Additional parameters for GenerateContentConfig
-        
+
         Returns:
             GenerateContentResponse
         """
@@ -308,6 +315,7 @@ class GreyCloudClient:
             safety_settings=safety_settings,
             tools=tools,
             thinking_level=thinking_level,
+            cached_content=cached_content,
             **kwargs
         )
         
@@ -328,11 +336,12 @@ class GreyCloudClient:
         safety_settings: Optional[List[Dict[str, Any]]] = None,
         tools: Optional[List[types.Tool]] = None,
         thinking_level: Optional[str] = None,
+        cached_content: Optional[str] = None,
         **kwargs
     ) -> Generator[str, None, None]:
         """
         Generate content (streaming)
-        
+
         Args:
             contents: List of Content objects representing conversation history
             model: Model name (defaults to config.model)
@@ -343,8 +352,9 @@ class GreyCloudClient:
             safety_settings: Safety settings override
             tools: Tools override
             thinking_level: Thinking level override
+            cached_content: Cache name to use for context (see GreyCloudCache)
             **kwargs: Additional parameters for GenerateContentConfig
-        
+
         Yields:
             str: Chunks of response text
         """
@@ -357,6 +367,7 @@ class GreyCloudClient:
             safety_settings=safety_settings,
             tools=tools,
             thinking_level=thinking_level,
+            cached_content=cached_content,
             **kwargs
         )
         

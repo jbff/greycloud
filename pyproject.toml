@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "greycloud"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reusable Google GenAI/Vertex AI Client Module"
 readme = "README.md"
 # google-genai >= 1.48.0 requires Python >= 3.10.
@@ -82,6 +82,7 @@ markers = [
     "integration: Integration tests",
     "auth: Authentication tests",
     "batch: Batch processing tests",
+    "cache: Context caching tests",
 ]
 
 [tool.coverage.run]

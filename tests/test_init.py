@@ -5,6 +5,7 @@ from greycloud import (
     GreyCloudConfig,
     GreyCloudClient,
     GreyCloudBatch,
+    GreyCloudCache,
     __version__,
     __all__
 )
@@ -12,31 +13,36 @@ from greycloud import (
 
 class TestPackageInit:
     """Test package initialization and exports"""
-    
+
     def test_version(self):
         """Test package version"""
-        assert __version__ == "0.1.0"
-    
+        assert __version__ == "0.2.0"
+
     def test_all_exports(self):
         """Test __all__ exports"""
-        expected_exports = ["GreyCloudConfig", "GreyCloudClient", "GreyCloudBatch"]
+        expected_exports = ["GreyCloudConfig", "GreyCloudClient", "GreyCloudBatch", "GreyCloudCache"]
         assert set(__all__) == set(expected_exports)
-    
+
     def test_config_import(self):
         """Test GreyCloudConfig import"""
         from greycloud import GreyCloudConfig
         assert GreyCloudConfig is not None
-    
+
     def test_client_import(self):
         """Test GreyCloudClient import"""
         from greycloud import GreyCloudClient
         assert GreyCloudClient is not None
-    
+
     def test_batch_import(self):
         """Test GreyCloudBatch import"""
         from greycloud import GreyCloudBatch
         assert GreyCloudBatch is not None
-    
+
+    def test_cache_import(self):
+        """Test GreyCloudCache import"""
+        from greycloud import GreyCloudCache
+        assert GreyCloudCache is not None
+
     def test_auth_import(self):
         """Test auth module import"""
         from greycloud.auth import create_client
