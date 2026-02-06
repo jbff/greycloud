@@ -9,6 +9,7 @@ from typing import Optional
 try:
     import google.auth
     from google.auth import impersonated_credentials
+
     HAS_GOOGLE_AUTH = True
 except ImportError:
     HAS_GOOGLE_AUTH = False
@@ -27,11 +28,11 @@ def create_client(
     api_key_file: str = "GOOGLE_CLOUD_API_KEY",
     endpoint: str = "https://aiplatform.googleapis.com",
     api_version: str = "v1",
-    auto_reauth: bool = True
+    auto_reauth: bool = True,
 ) -> genai.Client:
     """
     Create and return a genai.Client with appropriate authentication
-    
+
     Args:
         project_id: GCP project ID
         location: GCP location/region
@@ -41,10 +42,10 @@ def create_client(
         endpoint: API endpoint base URL
         api_version: API version
         auto_reauth: If True, automatically attempt re-authentication on failure
-    
+
     Returns:
         Authenticated genai.Client instance
-    
+
     Raises:
         FileNotFoundError: If API key file not found when use_api_key=True
         ImportError: If google-auth not available and not using API key
@@ -52,7 +53,7 @@ def create_client(
     """
     if use_api_key:
         try:
-            with open(api_key_file, 'r', encoding='utf-8') as f:
+            with open(api_key_file, "r", encoding="utf-8") as f:
                 api_key = f.read().strip()
         except FileNotFoundError:
             raise FileNotFoundError(
@@ -85,7 +86,7 @@ def create_client(
         # Try to get default credentials first
         try:
             source_creds, _ = google.auth.default(scopes=scopes)
-            
+
             # If sa_email is provided, try impersonation
             if sa_email:
                 try:
@@ -138,10 +139,14 @@ def create_client(
                     ).strip()
             except subprocess.CalledProcessError as e:
                 # Check if this is an authentication error that requires re-login
-                error_output = e.stderr.decode('utf-8') if e.stderr else str(e)
+                error_output = e.stderr.decode("utf-8") if e.stderr else str(e)
                 error_str = error_output.lower()
-                
-                if auto_reauth and ("application-default" in error_str or "reauth" in error_str or "login" in error_str):
+
+                if auto_reauth and (
+                    "application-default" in error_str
+                    or "reauth" in error_str
+                    or "login" in error_str
+                ):
                     # Try to automatically run gcloud auth application-default login
                     try:
                         # Note: This will require user interaction (browser) if not already authenticated
@@ -149,7 +154,7 @@ def create_client(
                             ["gcloud", "auth", "application-default", "login"],
                             check=True,
                             capture_output=False,  # Allow user interaction
-                            text=True
+                            text=True,
                         )
                         # Retry getting the token after re-authentication
                         if sa_email:
@@ -182,7 +187,9 @@ def create_client(
                         raise RuntimeError(
                             "Reauthentication is needed. Please run `gcloud auth application-default login` to reauthenticate."
                         ) from login_error
-                elif sa_email and ("not found" in error_str or "gaia id not found" in error_str):
+                elif sa_email and (
+                    "not found" in error_str or "gaia id not found" in error_str
+                ):
                     # Service account doesn't exist, try without impersonation
                     try:
                         token = subprocess.check_output(

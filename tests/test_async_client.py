@@ -1,6 +1,5 @@
 """Tests for GreyCloudAsyncClient"""
 
-import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from google.genai import types
@@ -13,6 +12,7 @@ from greycloud.config import GreyCloudConfig
 def async_sample_config():
     """Sample config for async client tests"""
     import subprocess
+
     with patch.object(subprocess, "run") as mock_run:
         mock_run.return_value.returncode = 0
         mock_run.return_value.stdout = "test-project-id"
@@ -74,7 +74,9 @@ class TestGreyCloudAsyncClientGenerate:
         mock_response.text = "Hello world"
         mock_async_genai_client.aio.models.generate_content.return_value = mock_response
 
-        with patch("greycloud.async_client.create_client", return_value=mock_async_genai_client):
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
             client = GreyCloudAsyncClient(async_sample_config)
             contents = [
                 types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
@@ -84,14 +86,20 @@ class TestGreyCloudAsyncClientGenerate:
             mock_async_genai_client.aio.models.generate_content.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_generate_content_with_rate_limiting(self, async_sample_config, mock_async_genai_client):
+    async def test_generate_content_with_rate_limiting(
+        self, async_sample_config, mock_async_genai_client
+    ):
         """generate_content goes through rate limiter"""
         mock_response = MagicMock()
         mock_async_genai_client.aio.models.generate_content.return_value = mock_response
 
-        with patch("greycloud.async_client.create_client", return_value=mock_async_genai_client):
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
             client = GreyCloudAsyncClient(async_sample_config)
-            with patch.object(client.rate_limiter, "call_with_limits", new_callable=AsyncMock) as mock_limiter:
+            with patch.object(
+                client.rate_limiter, "call_with_limits", new_callable=AsyncMock
+            ) as mock_limiter:
                 mock_limiter.return_value = mock_response
                 contents = [
                     types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
@@ -109,9 +117,13 @@ class TestGreyCloudAsyncClientCountTokens:
         """count_tokens returns token count"""
         mock_token_response = MagicMock()
         mock_token_response.total_tokens = 42
-        mock_async_genai_client.aio.models.count_tokens.return_value = mock_token_response
+        mock_async_genai_client.aio.models.count_tokens.return_value = (
+            mock_token_response
+        )
 
-        with patch("greycloud.async_client.create_client", return_value=mock_async_genai_client):
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
             client = GreyCloudAsyncClient(async_sample_config)
             contents = [
                 types.Content(role="user", parts=[types.Part.from_text(text="Hello")])
@@ -120,11 +132,17 @@ class TestGreyCloudAsyncClientCountTokens:
             assert count == 42
 
     @pytest.mark.asyncio
-    async def test_count_tokens_fallback(self, async_sample_config, mock_async_genai_client):
+    async def test_count_tokens_fallback(
+        self, async_sample_config, mock_async_genai_client
+    ):
         """count_tokens falls back to character estimate on failure"""
-        mock_async_genai_client.aio.models.count_tokens.side_effect = Exception("API down")
+        mock_async_genai_client.aio.models.count_tokens.side_effect = Exception(
+            "API down"
+        )
 
-        with patch("greycloud.async_client.create_client", return_value=mock_async_genai_client):
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
             client = GreyCloudAsyncClient(async_sample_config)
             contents = [
                 types.Content(role="user", parts=[types.Part.from_text(text="a" * 400)])
@@ -146,7 +164,9 @@ class TestGreyCloudAsyncClientRetry:
             mock_response,
         ]
 
-        with patch("greycloud.async_client.create_client", return_value=mock_async_genai_client):
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
             client = GreyCloudAsyncClient(async_sample_config)
             contents = [
                 types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
@@ -156,11 +176,17 @@ class TestGreyCloudAsyncClientRetry:
             assert mock_async_genai_client.aio.models.generate_content.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_retry_exhausted_raises(self, async_sample_config, mock_async_genai_client):
+    async def test_retry_exhausted_raises(
+        self, async_sample_config, mock_async_genai_client
+    ):
         """Raises after max retries exhausted"""
-        mock_async_genai_client.aio.models.generate_content.side_effect = RuntimeError("500 Server Error")
+        mock_async_genai_client.aio.models.generate_content.side_effect = RuntimeError(
+            "500 Server Error"
+        )
 
-        with patch("greycloud.async_client.create_client", return_value=mock_async_genai_client):
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
             client = GreyCloudAsyncClient(async_sample_config)
             contents = [
                 types.Content(role="user", parts=[types.Part.from_text(text="Hi")])

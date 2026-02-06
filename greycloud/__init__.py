@@ -2,8 +2,8 @@
 GreyCloud - Reusable Google GenAI/Vertex AI Client Module
 
 A comprehensive, configurable module for interacting with Google's Vertex AI
-and GenAI services, including authentication, content generation, batch processing,
-context caching, and file management.
+and GenAI services, including authentication, content generation, batch
+processing, context caching, and file management.
 """
 
 from .config import GreyCloudConfig

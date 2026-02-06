@@ -2,7 +2,7 @@
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 from greycloud.rate_limiter import VertexRateLimiter
 
@@ -63,10 +63,7 @@ class TestVertexRateLimiterCallWithLimits:
             current_concurrent -= 1
             return "done"
 
-        tasks = [
-            limiter.call_with_limits(10, track_concurrency())
-            for _ in range(5)
-        ]
+        tasks = [limiter.call_with_limits(10, track_concurrency()) for _ in range(5)]
         await asyncio.gather(*tasks)
         assert max_concurrent <= 2
 

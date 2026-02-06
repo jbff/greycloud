@@ -63,9 +63,15 @@ class GreyCloudAsyncClient:
     ) -> types.GenerateContentConfig:
         """Build GenerateContentConfig from parameters and config defaults."""
         config_dict: Dict[str, Any] = {
-            "temperature": temperature if temperature is not None else self.config.temperature,
+            "temperature": (
+                temperature if temperature is not None else self.config.temperature
+            ),
             "top_p": top_p if top_p is not None else self.config.top_p,
-            "max_output_tokens": max_output_tokens if max_output_tokens is not None else self.config.max_output_tokens,
+            "max_output_tokens": (
+                max_output_tokens
+                if max_output_tokens is not None
+                else self.config.max_output_tokens
+            ),
         }
         if system_instruction or self.config.system_instruction:
             si = system_instruction or self.config.system_instruction
@@ -152,9 +158,9 @@ class GreyCloudAsyncClient:
                         model=model_name, contents=contents, config=config
                     ),
                 )
-            except Exception as e:
+            except Exception:
                 if attempt >= max_retries:
                     raise
-                delay = min(base_delay * (2 ** attempt), max_delay)
+                delay = min(base_delay * (2**attempt), max_delay)
                 jitter = random.uniform(0, delay * 0.1)
                 await asyncio.sleep(delay + jitter)

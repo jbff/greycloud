@@ -22,7 +22,6 @@ from google.genai import types
 from .config import GreyCloudConfig
 from .auth import create_client
 
-
 # Minimum token requirements by model family
 MIN_TOKENS_BY_MODEL = {
     "gemini-2.0": 2048,

@@ -63,6 +63,7 @@ class TestGreyCloudCacheInit:
     def test_init_without_config(self):
         """Initialize without config creates default"""
         import subprocess
+
         with patch.object(subprocess, "run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "test-project-id"
@@ -95,7 +96,9 @@ class TestGreyCloudCacheClient:
             assert client1 is client2
             mock_create.assert_called_once()
 
-    def test_client_uses_config_location(self, sample_config, mock_genai_client, mock_credentials):
+    def test_client_uses_config_location(
+        self, sample_config, mock_genai_client, mock_credentials
+    ):
         """Client is created with config.location, not hardcoded 'global'"""
         sample_config.location = "us-east4"
         cache_client = GreyCloudCache(sample_config)
@@ -114,10 +117,7 @@ class TestGreyCloudCacheContentsToTypes:
     def test_content_objects_passthrough(self, sample_config):
         """Content objects pass through unchanged"""
         cache_client = GreyCloudCache(sample_config)
-        content = types.Content(
-            role="user",
-            parts=[types.Part.from_text(text="Hello")]
-        )
+        content = types.Content(role="user", parts=[types.Part.from_text(text="Hello")])
         result = cache_client._contents_to_types([content])
         assert len(result) == 1
         assert result[0] == content
@@ -125,10 +125,7 @@ class TestGreyCloudCacheContentsToTypes:
     def test_dict_with_text(self, sample_config):
         """Dict with text is converted"""
         cache_client = GreyCloudCache(sample_config)
-        content_dict = {
-            "role": "user",
-            "parts": [{"text": "Hello"}]
-        }
+        content_dict = {"role": "user", "parts": [{"text": "Hello"}]}
         result = cache_client._contents_to_types([content_dict])
         assert len(result) == 1
         assert result[0].role == "user"
@@ -137,10 +134,7 @@ class TestGreyCloudCacheContentsToTypes:
     def test_dict_with_string_part(self, sample_config):
         """Dict with string part is converted"""
         cache_client = GreyCloudCache(sample_config)
-        content_dict = {
-            "role": "user",
-            "parts": ["Hello world"]
-        }
+        content_dict = {"role": "user", "parts": ["Hello world"]}
         result = cache_client._contents_to_types([content_dict])
         assert len(result) == 1
         assert result[0].role == "user"
@@ -150,12 +144,14 @@ class TestGreyCloudCacheContentsToTypes:
         cache_client = GreyCloudCache(sample_config)
         content_dict = {
             "role": "user",
-            "parts": [{
-                "file_data": {
-                    "file_uri": "gs://bucket/file.pdf",
-                    "mime_type": "application/pdf"
+            "parts": [
+                {
+                    "file_data": {
+                        "file_uri": "gs://bucket/file.pdf",
+                        "mime_type": "application/pdf",
+                    }
                 }
-            }]
+            ],
         }
         result = cache_client._contents_to_types([content_dict])
         assert len(result) == 1
@@ -185,7 +181,9 @@ class TestGreyCloudCacheCreateCache:
             assert cache.name == "cachedContents/test-cache"
             mock_genai_client.caches.create.assert_called_once()
 
-    def test_create_cache_with_system_instruction(self, sample_config, mock_genai_client):
+    def test_create_cache_with_system_instruction(
+        self, sample_config, mock_genai_client
+    ):
         """Create cache with system instruction"""
         cache_client = GreyCloudCache(sample_config)
 
@@ -276,7 +274,9 @@ class TestGreyCloudCacheCreateCacheFromFiles:
             assert cache.name == "cachedContents/files-cache"
             mock_genai_client.caches.create.assert_called_once()
 
-    def test_create_cache_from_files_with_mime_types(self, sample_config, mock_genai_client):
+    def test_create_cache_from_files_with_mime_types(
+        self, sample_config, mock_genai_client
+    ):
         """Create cache from files with explicit MIME types"""
         cache_client = GreyCloudCache(sample_config)
 
@@ -371,7 +371,9 @@ class TestGreyCloudCacheUpdateCacheTTL:
         with patch("greycloud.cache.create_client") as mock_create:
             mock_create.return_value = mock_genai_client
 
-            expire_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=4)
+            expire_at = datetime.datetime.now(
+                datetime.timezone.utc
+            ) + datetime.timedelta(hours=4)
             cache_client.update_cache_ttl(
                 name="cachedContents/test-cache",
                 expire_time=expire_at,
@@ -383,7 +385,9 @@ class TestGreyCloudCacheUpdateCacheTTL:
         """Providing both ttl_seconds and expire_time raises ValueError"""
         cache_client = GreyCloudCache(sample_config)
 
-        with pytest.raises(ValueError, match="Provide either ttl_seconds or expire_time"):
+        with pytest.raises(
+            ValueError, match="Provide either ttl_seconds or expire_time"
+        ):
             cache_client.update_cache_ttl(
                 name="cachedContents/test-cache",
                 ttl_seconds=3600,
@@ -394,7 +398,9 @@ class TestGreyCloudCacheUpdateCacheTTL:
         """Providing neither ttl_seconds nor expire_time raises ValueError"""
         cache_client = GreyCloudCache(sample_config)
 
-        with pytest.raises(ValueError, match="Must provide either ttl_seconds or expire_time"):
+        with pytest.raises(
+            ValueError, match="Must provide either ttl_seconds or expire_time"
+        ):
             cache_client.update_cache_ttl(name="cachedContents/test-cache")
 
 
@@ -468,7 +474,9 @@ class TestGreyCloudCacheDeleteAllCaches:
 class TestGreyCloudCacheGenerateWithCache:
     """Tests for generate_with_cache method"""
 
-    def test_generate_with_cache_string_prompt(self, sample_config, mock_genai_client, mock_generate_response):
+    def test_generate_with_cache_string_prompt(
+        self, sample_config, mock_genai_client, mock_generate_response
+    ):
         """Generate with cache using string prompt"""
         cache_client = GreyCloudCache(sample_config)
 
@@ -485,7 +493,9 @@ class TestGreyCloudCacheGenerateWithCache:
             assert response.text == "This is a test response"
             mock_genai_client.models.generate_content.assert_called_once()
 
-    def test_generate_with_cache_contents_prompt(self, sample_config, mock_genai_client, mock_generate_response):
+    def test_generate_with_cache_contents_prompt(
+        self, sample_config, mock_genai_client, mock_generate_response
+    ):
         """Generate with cache using Content list prompt"""
         cache_client = GreyCloudCache(sample_config)
 
@@ -502,7 +512,9 @@ class TestGreyCloudCacheGenerateWithCache:
 
             assert response.text == "This is a test response"
 
-    def test_generate_with_cache_parameters(self, sample_config, mock_genai_client, mock_generate_response):
+    def test_generate_with_cache_parameters(
+        self, sample_config, mock_genai_client, mock_generate_response
+    ):
         """Generate with cache using custom parameters"""
         cache_client = GreyCloudCache(sample_config)
 
@@ -542,15 +554,19 @@ class TestGreyCloudCacheGenerateWithCacheStream:
         mock_chunk2.candidates[0].content.parts = [MagicMock()]
         mock_chunk2.text = " World"
 
-        mock_genai_client.models.generate_content_stream.return_value = iter([mock_chunk1, mock_chunk2])
+        mock_genai_client.models.generate_content_stream.return_value = iter(
+            [mock_chunk1, mock_chunk2]
+        )
 
         with patch("greycloud.cache.create_client") as mock_create:
             mock_create.return_value = mock_genai_client
 
-            chunks = list(cache_client.generate_with_cache_stream(
-                cache_name="cachedContents/test-cache",
-                prompt="Summarize",
-            ))
+            chunks = list(
+                cache_client.generate_with_cache_stream(
+                    cache_name="cachedContents/test-cache",
+                    prompt="Summarize",
+                )
+            )
 
             assert chunks == ["Hello", " World"]
 
@@ -584,7 +600,9 @@ class TestGreyCloudCacheGetCacheInfo:
 class TestGreyCloudCacheIntegration:
     """Integration-style tests for GreyCloudCache"""
 
-    def test_full_cache_lifecycle(self, sample_config, mock_genai_client, mock_generate_response):
+    def test_full_cache_lifecycle(
+        self, sample_config, mock_genai_client, mock_generate_response
+    ):
         """Test full cache lifecycle: create, use, delete"""
         cache_client = GreyCloudCache(sample_config)
 
