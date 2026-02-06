@@ -7,7 +7,7 @@ to enforce RPM, TPM, and concurrency limits.
 
 import asyncio
 import random
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, AsyncGenerator, Union
 
 from google import genai
 from google.genai import types
@@ -42,6 +42,11 @@ class GreyCloudAsyncClient:
             auto_reauth=self.config.auto_reauth,
         )
 
+    @property
+    def client(self) -> genai.Client:
+        """Underlying genai.Client for advanced use. Prefer this client's methods for generation so rate limits are applied."""
+        return self._client
+
     def _estimate_prompt_tokens(self, contents: List[types.Content]) -> int:
         """Estimate token count from contents for rate limiter."""
         total_chars = 0
@@ -52,35 +57,89 @@ class GreyCloudAsyncClient:
                         total_chars += len(part.text)
         return max(total_chars // 4, 1)
 
+    def _build_tools(self) -> List[types.Tool]:
+        """Build tools list based on configuration."""
+        tools = []
+        if self.config.use_vertex_ai_search and self.config.vertex_ai_search_datastore:
+            tools.append(
+                types.Tool(
+                    retrieval=types.Retrieval(
+                        vertex_ai_search=types.VertexAISearch(
+                            datastore=self.config.vertex_ai_search_datastore
+                        )
+                    )
+                )
+            )
+        return tools
+
     def _build_generate_config(
         self,
         system_instruction: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
+        safety_settings: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[types.Tool]] = None,
+        thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
         **kwargs,
     ) -> types.GenerateContentConfig:
         """Build GenerateContentConfig from parameters and config defaults."""
+        final_temperature = (
+            temperature if temperature is not None else self.config.temperature
+        )
+        final_top_p = top_p if top_p is not None else self.config.top_p
+        final_max_output_tokens = (
+            max_output_tokens
+            if max_output_tokens is not None
+            else self.config.max_output_tokens
+        )
+        final_safety_settings = (
+            safety_settings
+            if safety_settings is not None
+            else self.config.safety_settings
+        )
+        final_system_instruction = (
+            system_instruction
+            if system_instruction is not None
+            else self.config.system_instruction
+        )
+        final_tools = tools if tools is not None else self._build_tools()
+        final_thinking_level = (
+            thinking_level if thinking_level is not None else self.config.thinking_level
+        )
+
+        safety_settings_list = None
+        if final_safety_settings is not None:
+            safety_settings_list = []
+            for setting in final_safety_settings:
+                if isinstance(setting, dict):
+                    safety_settings_list.append(
+                        types.SafetySetting(
+                            category=setting["category"],
+                            threshold=setting["threshold"],
+                        )
+                    )
+                else:
+                    safety_settings_list.append(setting)
+
         config_dict: Dict[str, Any] = {
-            "temperature": (
-                temperature if temperature is not None else self.config.temperature
-            ),
-            "top_p": top_p if top_p is not None else self.config.top_p,
-            "max_output_tokens": (
-                max_output_tokens
-                if max_output_tokens is not None
-                else self.config.max_output_tokens
-            ),
+            "temperature": final_temperature,
+            "top_p": final_top_p,
+            "max_output_tokens": final_max_output_tokens,
+            "tools": final_tools,
         }
-        if system_instruction or self.config.system_instruction:
-            si = system_instruction or self.config.system_instruction
-            config_dict["system_instruction"] = [types.Part.from_text(text=si)]
+        if safety_settings_list is not None:
+            config_dict["safety_settings"] = safety_settings_list
         if self.config.seed is not None:
             config_dict["seed"] = self.config.seed
-        if self.config.thinking_level:
+        if final_system_instruction:
+            config_dict["system_instruction"] = [
+                types.Part.from_text(text=final_system_instruction)
+            ]
+        if final_thinking_level:
             config_dict["thinking_config"] = types.ThinkingConfig(
-                thinking_level=self.config.thinking_level
+                thinking_level=final_thinking_level
             )
         if cached_content:
             config_dict["cached_content"] = cached_content
@@ -95,6 +154,9 @@ class GreyCloudAsyncClient:
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
+        safety_settings: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[types.Tool]] = None,
+        thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
         **kwargs,
     ) -> types.GenerateContentResponse:
@@ -105,6 +167,9 @@ class GreyCloudAsyncClient:
             temperature=temperature,
             top_p=top_p,
             max_output_tokens=max_output_tokens,
+            safety_settings=safety_settings,
+            tools=tools,
+            thinking_level=thinking_level,
             cached_content=cached_content,
             **kwargs,
         )
@@ -115,6 +180,51 @@ class GreyCloudAsyncClient:
                 model=model_name, contents=contents, config=config
             ),
         )
+
+    async def generate_content_stream(
+        self,
+        contents: List[types.Content],
+        model: Optional[str] = None,
+        system_instruction: Optional[str] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_output_tokens: Optional[int] = None,
+        safety_settings: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[types.Tool]] = None,
+        thinking_level: Optional[str] = None,
+        cached_content: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncGenerator[str, None]:
+        """Generate content (streaming). Yields text chunks. Rate-limited."""
+        model_name = model or self.config.model
+        config = self._build_generate_config(
+            system_instruction=system_instruction,
+            temperature=temperature,
+            top_p=top_p,
+            max_output_tokens=max_output_tokens,
+            safety_settings=safety_settings,
+            tools=tools,
+            thinking_level=thinking_level,
+            cached_content=cached_content,
+            **kwargs,
+        )
+        token_est = self._estimate_prompt_tokens(contents)
+
+        async def _start_stream():
+            return self._client.aio.models.generate_content_stream(
+                model=model_name, contents=contents, config=config
+            )
+
+        stream = await self.rate_limiter.call_with_limits(token_est, _start_stream())
+        async for chunk in stream:
+            if (
+                chunk.candidates
+                and chunk.candidates[0].content
+                and chunk.candidates[0].content.parts
+            ):
+                chunk_text = chunk.text
+                if chunk_text:
+                    yield chunk_text
 
     async def count_tokens(
         self,
@@ -141,13 +251,19 @@ class GreyCloudAsyncClient:
         self,
         contents: List[types.Content],
         max_retries: int = 5,
+        streaming: bool = False,
         base_delay: float = 2.0,
         max_delay: float = 60.0,
         **generate_kwargs,
-    ) -> types.GenerateContentResponse:
-        """Generate content with exponential backoff retry."""
-        model_name = generate_kwargs.pop("model", None) or self.config.model
-        config = self._build_generate_config(**generate_kwargs)
+    ) -> Union[types.GenerateContentResponse, AsyncGenerator[str, None]]:
+        """Generate content with exponential backoff retry. If streaming=True, returns an async generator of text chunks."""
+        if streaming:
+            return self._generate_with_retry_stream(
+                contents, max_retries, base_delay, max_delay, **generate_kwargs
+            )
+        model_name = generate_kwargs.get("model") or self.config.model
+        config_kwargs = {k: v for k, v in generate_kwargs.items() if k != "model"}
+        config = self._build_generate_config(**config_kwargs)
         token_est = self._estimate_prompt_tokens(contents)
 
         for attempt in range(max_retries + 1):
@@ -164,3 +280,28 @@ class GreyCloudAsyncClient:
                 delay = min(base_delay * (2**attempt), max_delay)
                 jitter = random.uniform(0, delay * 0.1)
                 await asyncio.sleep(delay + jitter)
+        raise RuntimeError("Failed to generate content after retries")
+
+    async def _generate_with_retry_stream(
+        self,
+        contents: List[types.Content],
+        max_retries: int,
+        base_delay: float,
+        max_delay: float,
+        **generate_kwargs,
+    ) -> AsyncGenerator[str, None]:
+        """Async generator that yields stream chunks with retry on failure."""
+        for attempt in range(max_retries + 1):
+            try:
+                async for chunk in self.generate_content_stream(
+                    contents, **generate_kwargs
+                ):
+                    yield chunk
+                return
+            except Exception:
+                if attempt >= max_retries:
+                    raise
+                delay = min(base_delay * (2**attempt), max_delay)
+                jitter = random.uniform(0, delay * 0.1)
+                await asyncio.sleep(delay + jitter)
+        raise RuntimeError("Failed to generate content after retries")

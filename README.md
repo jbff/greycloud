@@ -76,6 +76,22 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
     - Manages GCS paths and result locations
     - Tries multiple model naming formats (`publishers/google/models/...` vs short name)
 
+- **Sync vs async**
+  - Same config (`GreyCloudConfig`) and same method names for sync and async.
+  - Use `GreyCloudClient` for synchronous code; use `GreyCloudAsyncClient` for async/rate-limited usage.
+  - The async client applies RPM, TPM, and concurrency limits via `VertexRateLimiter`; use it when you need to stay within quotas (e.g. in web backends).
+  - API mapping:
+
+    | Sync (`GreyCloudClient`) | Async (`GreyCloudAsyncClient`) |
+    |--------------------------|---------------------------------|
+    | `generate_content(...)` | `await generate_content(...)` |
+    | `generate_content_stream(...)` | `async for x in generate_content_stream(...)` |
+    | `generate_with_retry(..., streaming=False)` | `await generate_with_retry(...)` |
+    | `generate_with_retry(..., streaming=True)` | `async for x in (await generate_with_retry(..., streaming=True))` |
+    | `count_tokens(...)` | `await count_tokens(...)` |
+
+  - For advanced use the underlying `genai.Client` is available as `.client` on both clients; rate-limited generation should go through the client’s methods, not raw `client.aio.models.*`.
+
 ---
 
 ## 3. Installation

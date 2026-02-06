@@ -8,6 +8,12 @@ from greycloud.async_client import GreyCloudAsyncClient
 from greycloud.config import GreyCloudConfig
 
 
+async def _mock_stream_chunks(*chunks):
+    """Helper: async generator yielding chunk mocks with .text."""
+    for c in chunks:
+        yield c
+
+
 @pytest.fixture
 def async_sample_config():
     """Sample config for async client tests"""
@@ -63,6 +69,53 @@ class TestGreyCloudAsyncClientInit:
             assert client.rate_limiter.tpm == 100_000
             assert client.rate_limiter.max_concurrency == 5
 
+    def test_client_property(self, async_sample_config):
+        """Async client exposes .client for advanced use"""
+        with patch("greycloud.async_client.create_client") as mock_create:
+            mock_client = MagicMock()
+            mock_create.return_value = mock_client
+            client = GreyCloudAsyncClient(async_sample_config)
+            assert client.client is mock_client
+
+
+class TestGreyCloudAsyncClientConfigBuilding:
+    """Tests for _build_tools and _build_generate_config parity with sync"""
+
+    def test_build_tools_with_vertex_search(self, async_sample_config):
+        """When use_vertex_ai_search and datastore set, config includes tools"""
+        config = GreyCloudConfig(
+            project_id="test-project-id",
+            location="us-east4",
+            use_vertex_ai_search=True,
+            vertex_ai_search_datastore="projects/test/locations/us/datastores/test-ds",
+        )
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(config)
+            tools = client._build_tools()
+            assert len(tools) == 1
+            assert tools[0].retrieval is not None
+
+    def test_build_tools_without_vertex_search(self, async_sample_config):
+        """Without vertex search, _build_tools returns empty list"""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            tools = client._build_tools()
+            assert len(tools) == 0
+
+    def test_build_generate_config_with_safety_settings(self, async_sample_config):
+        """Generated config includes safety_settings when provided"""
+        safety_settings = [
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE",
+            }
+        ]
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            config = client._build_generate_config(safety_settings=safety_settings)
+            assert len(config.safety_settings) == 1
+            assert config.safety_settings[0].category == "HARM_CATEGORY_HATE_SPEECH"
+
 
 class TestGreyCloudAsyncClientGenerate:
     """Tests for async generate_content"""
@@ -107,6 +160,80 @@ class TestGreyCloudAsyncClientGenerate:
                 result = await client.generate_content(contents)
                 mock_limiter.assert_called_once()
                 assert result == mock_response
+
+
+class TestGreyCloudAsyncClientGenerateContentStream:
+    """Tests for async generate_content_stream"""
+
+    @pytest.mark.asyncio
+    async def test_generate_content_stream_yields_chunks(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_content_stream yields text chunks from stream"""
+        mock_chunk1 = MagicMock()
+        mock_chunk1.candidates = [MagicMock()]
+        mock_chunk1.candidates[0].content = MagicMock()
+        mock_chunk1.candidates[0].content.parts = [MagicMock()]
+        mock_chunk1.text = "Hello "
+        mock_chunk2 = MagicMock()
+        mock_chunk2.candidates = [MagicMock()]
+        mock_chunk2.candidates[0].content = MagicMock()
+        mock_chunk2.candidates[0].content.parts = [MagicMock()]
+        mock_chunk2.text = "World"
+        # Real API returns async generator when called (not a coroutine); use MagicMock
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            return_value=_mock_stream_chunks(mock_chunk1, mock_chunk2)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            chunks = []
+            async for chunk in client.generate_content_stream(contents):
+                chunks.append(chunk)
+            assert chunks == ["Hello ", "World"]
+
+    @pytest.mark.asyncio
+    async def test_generate_content_stream_uses_rate_limiter(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_content_stream goes through rate limiter"""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.text = "x"
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            return_value=_mock_stream_chunks(mock_chunk)
+        )
+
+        async def fake_call_with_limits(token_est, coro):
+            return await coro
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            with patch.object(
+                client.rate_limiter,
+                "call_with_limits",
+                new_callable=AsyncMock,
+                side_effect=fake_call_with_limits,
+            ) as mock_limiter:
+                contents = [
+                    types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+                ]
+                chunks = []
+                async for chunk in client.generate_content_stream(contents):
+                    chunks.append(chunk)
+                assert chunks == ["x"]
+                mock_limiter.assert_called_once()
+                call_args = mock_limiter.call_args
+                assert call_args[0][0] >= 1  # token_est
 
 
 class TestGreyCloudAsyncClientCountTokens:
@@ -194,3 +321,82 @@ class TestGreyCloudAsyncClientRetry:
             with pytest.raises(RuntimeError, match="500 Server Error"):
                 await client.generate_with_retry(contents, max_retries=2)
             assert mock_async_genai_client.aio.models.generate_content.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_generate_with_retry_streaming_yields_chunks(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_with_retry(streaming=True) returns async generator of text chunks"""
+        mock_chunk1 = MagicMock()
+        mock_chunk1.candidates = [MagicMock()]
+        mock_chunk1.candidates[0].content = MagicMock()
+        mock_chunk1.candidates[0].content.parts = [MagicMock()]
+        mock_chunk1.text = "Hello "
+        mock_chunk2 = MagicMock()
+        mock_chunk2.candidates = [MagicMock()]
+        mock_chunk2.candidates[0].content = MagicMock()
+        mock_chunk2.candidates[0].content.parts = [MagicMock()]
+        mock_chunk2.text = "World"
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            return_value=_mock_stream_chunks(mock_chunk1, mock_chunk2)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            gen = await client.generate_with_retry(contents, streaming=True)
+            chunks = []
+            async for chunk in gen:
+                chunks.append(chunk)
+            assert chunks == ["Hello ", "World"]
+
+    @pytest.mark.asyncio
+    async def test_generate_with_retry_streaming_retries_on_exception(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_with_retry(streaming=True) retries on stream exception"""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.text = "OK"
+
+        async def stream_raise_then_ok():
+            yield mock_chunk  # first chunk
+            raise RuntimeError("stream broken")
+
+        async def stream_ok():
+            yield mock_chunk
+
+        call_count = 0
+
+        def make_stream(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return stream_raise_then_ok()
+            return stream_ok()
+
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=make_stream
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            gen = await client.generate_with_retry(
+                contents, streaming=True, max_retries=2
+            )
+            chunks = []
+            async for chunk in gen:
+                chunks.append(chunk)
+            assert chunks == ["OK", "OK"]
+            assert call_count == 2
