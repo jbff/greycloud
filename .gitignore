@@ -50,3 +50,9 @@ resume-cursor.sh
 GOOGLE_CLOUD_API_KEY
 *.log
 PUBLISHING.md
+docs/plans
+
+# Beads runtime / local state (issues.jsonl and .beads/.gitignore are tracked)
+.beads/.jsonl.lock
+.beads/interactions.jsonl
+.beads/metadata.json
