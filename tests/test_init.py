@@ -20,7 +20,14 @@ class TestPackageInit:
 
     def test_all_exports(self):
         """Test __all__ exports"""
-        expected_exports = ["GreyCloudConfig", "GreyCloudClient", "GreyCloudBatch", "GreyCloudCache"]
+        expected_exports = [
+            "GreyCloudConfig",
+            "GreyCloudClient",
+            "GreyCloudBatch",
+            "GreyCloudCache",
+            "VertexRateLimiter",
+            "GreyCloudAsyncClient",
+        ]
         assert set(__all__) == set(expected_exports)
 
     def test_config_import(self):
@@ -47,3 +54,13 @@ class TestPackageInit:
         """Test auth module import"""
         from greycloud.auth import create_client
         assert create_client is not None
+
+    def test_async_client_exported(self):
+        """GreyCloudAsyncClient is importable from greycloud"""
+        from greycloud import GreyCloudAsyncClient
+        assert GreyCloudAsyncClient is not None
+
+    def test_rate_limiter_exported(self):
+        """VertexRateLimiter is importable from greycloud"""
+        from greycloud import VertexRateLimiter
+        assert VertexRateLimiter is not None
