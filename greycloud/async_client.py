@@ -211,7 +211,7 @@ class GreyCloudAsyncClient:
         token_est = self._estimate_prompt_tokens(contents)
 
         async def _start_stream():
-            return self._client.aio.models.generate_content_stream(
+            return await self._client.aio.models.generate_content_stream(
                 model=model_name, contents=contents, config=config
             )
 

@@ -14,6 +14,11 @@ async def _mock_stream_chunks(*chunks):
         yield c
 
 
+async def _mock_stream_awaitable(*chunks):
+    """Coroutine that resolves to an async generator (for API where generate_content_stream is awaited)."""
+    return _mock_stream_chunks(*chunks)
+
+
 @pytest.fixture
 def async_sample_config():
     """Sample config for async client tests"""
@@ -180,9 +185,11 @@ class TestGreyCloudAsyncClientGenerateContentStream:
         mock_chunk2.candidates[0].content = MagicMock()
         mock_chunk2.candidates[0].content.parts = [MagicMock()]
         mock_chunk2.text = "World"
-        # Real API returns async generator when called (not a coroutine); use MagicMock
+        # API is awaited and returns stream; mock returns coroutine that resolves to generator
         mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
-            return_value=_mock_stream_chunks(mock_chunk1, mock_chunk2)
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(
+                mock_chunk1, mock_chunk2
+            )
         )
 
         with patch(
@@ -208,7 +215,7 @@ class TestGreyCloudAsyncClientGenerateContentStream:
         mock_chunk.candidates[0].content.parts = [MagicMock()]
         mock_chunk.text = "x"
         mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
-            return_value=_mock_stream_chunks(mock_chunk)
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(mock_chunk)
         )
 
         async def fake_call_with_limits(token_est, coro):
@@ -338,7 +345,9 @@ class TestGreyCloudAsyncClientRetry:
         mock_chunk2.candidates[0].content.parts = [MagicMock()]
         mock_chunk2.text = "World"
         mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
-            return_value=_mock_stream_chunks(mock_chunk1, mock_chunk2)
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(
+                mock_chunk1, mock_chunk2
+            )
         )
 
         with patch(
@@ -374,7 +383,7 @@ class TestGreyCloudAsyncClientRetry:
 
         call_count = 0
 
-        def make_stream(*args, **kwargs):
+        async def make_stream_awaitable(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -382,7 +391,7 @@ class TestGreyCloudAsyncClientRetry:
             return stream_ok()
 
         mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
-            side_effect=make_stream
+            side_effect=make_stream_awaitable
         )
 
         with patch(
