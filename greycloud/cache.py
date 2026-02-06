@@ -92,19 +92,18 @@ class GreyCloudCache:
         if self._client is None:
             self._client = create_client(
                 project_id=self.config.project_id,
-                location=self.config.location,
+                location="global",
                 sa_email=self.config.sa_email,
                 use_api_key=self.config.use_api_key,
                 api_key_file=self.config.api_key_file,
                 endpoint=self.config.endpoint,
                 api_version=self.config.api_version,
-                auto_reauth=self.config.auto_reauth
+                auto_reauth=self.config.auto_reauth,
             )
         return self._client
 
     def _contents_to_types(
-        self,
-        contents: List[Union[types.Content, Dict[str, Any]]]
+        self, contents: List[Union[types.Content, Dict[str, Any]]]
     ) -> List[types.Content]:
         """Convert contents to types.Content objects if needed"""
         result = []
@@ -124,10 +123,16 @@ class GreyCloudCache:
                             typed_parts.append(types.Part.from_text(text=part["text"]))
                         elif "file_data" in part:
                             file_data = part["file_data"]
-                            typed_parts.append(types.Part.from_uri(
-                                file_uri=file_data.get("file_uri", file_data.get("fileUri")),
-                                mime_type=file_data.get("mime_type", file_data.get("mimeType"))
-                            ))
+                            typed_parts.append(
+                                types.Part.from_uri(
+                                    file_uri=file_data.get(
+                                        "file_uri", file_data.get("fileUri")
+                                    ),
+                                    mime_type=file_data.get(
+                                        "mime_type", file_data.get("mimeType")
+                                    ),
+                                )
+                            )
                     elif isinstance(part, str):
                         typed_parts.append(types.Part.from_text(text=part))
                 result.append(types.Content(role=role, parts=typed_parts))
@@ -218,12 +223,7 @@ class GreyCloudCache:
         Returns:
             CachedContent object
         """
-        contents = [
-            types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=text)]
-            )
-        ]
+        contents = [types.Content(role="user", parts=[types.Part.from_text(text=text)])]
         return self.create_cache(
             contents=contents,
             model=model,
@@ -377,7 +377,7 @@ class GreyCloudCache:
         top_p: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         safety_settings: Optional[List[Dict[str, Any]]] = None,
-        **kwargs
+        **kwargs,
     ) -> types.GenerateContentResponse:
         """
         Generate content using a cache
@@ -402,10 +402,7 @@ class GreyCloudCache:
         # Convert prompt to contents
         if isinstance(prompt, str):
             contents = [
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=prompt)]
-                )
+                types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
             ]
         else:
             contents = self._contents_to_types(prompt)
@@ -463,7 +460,7 @@ class GreyCloudCache:
         top_p: Optional[float] = None,
         max_output_tokens: Optional[int] = None,
         safety_settings: Optional[List[Dict[str, Any]]] = None,
-        **kwargs
+        **kwargs,
     ) -> Iterator[str]:
         """
         Generate content using a cache (streaming)
@@ -486,10 +483,7 @@ class GreyCloudCache:
         # Convert prompt to contents
         if isinstance(prompt, str):
             contents = [
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=prompt)]
-                )
+                types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
             ]
         else:
             contents = self._contents_to_types(prompt)
@@ -537,7 +531,11 @@ class GreyCloudCache:
             contents=contents,
             config=generate_config,
         ):
-            if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+            if (
+                chunk.candidates
+                and chunk.candidates[0].content
+                and chunk.candidates[0].content.parts
+            ):
                 chunk_text = chunk.text
                 if chunk_text:
                     yield chunk_text
