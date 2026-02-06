@@ -11,5 +11,5 @@ from .client import GreyCloudClient
 from .batch import GreyCloudBatch
 from .cache import GreyCloudCache
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __all__ = ["GreyCloudConfig", "GreyCloudClient", "GreyCloudBatch", "GreyCloudCache"]
