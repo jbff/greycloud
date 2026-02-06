@@ -92,7 +92,7 @@ class GreyCloudCache:
         if self._client is None:
             self._client = create_client(
                 project_id=self.config.project_id,
-                location="global",
+                location=self.config.location,
                 sa_email=self.config.sa_email,
                 use_api_key=self.config.use_api_key,
                 api_key_file=self.config.api_key_file,

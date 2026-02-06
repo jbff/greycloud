@@ -95,6 +95,18 @@ class TestGreyCloudCacheClient:
             assert client1 is client2
             mock_create.assert_called_once()
 
+    def test_client_uses_config_location(self, sample_config, mock_genai_client, mock_credentials):
+        """Client is created with config.location, not hardcoded 'global'"""
+        sample_config.location = "us-east4"
+        cache_client = GreyCloudCache(sample_config)
+
+        with patch("greycloud.cache.create_client") as mock_create:
+            mock_create.return_value = mock_genai_client
+            _ = cache_client.client
+            mock_create.assert_called_once()
+            call_kwargs = mock_create.call_args
+            assert call_kwargs[1]["location"] == "us-east4"
+
 
 class TestGreyCloudCacheContentsToTypes:
     """Tests for _contents_to_types helper"""
