@@ -94,6 +94,13 @@ Quality and reliability are maintained through a strict test-driven development 
 
 ---
 
+### Markdown pollution avoidance
+- **Do not** add/commit every markdown file you create to git repo.
+- **DO** add/commit critical documentation that an end user would benefit from, and any markdown files explicitly instructed to track
+- You should thus avoid the git repo exploding with temporary/out of date markdown files
+
+---
+
 ## Architecture
 The logic is contained within five main modules in `greycloud/`:
 
