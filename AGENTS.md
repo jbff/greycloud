@@ -78,6 +78,18 @@ This project uses a "floating tag" strategy for the current development version 
 4. Update/Create tag: `git tag -f <current_version>`.
 5. Push: `git push origin <branch> --tags`.
 6. If publishing: Run `uv build ; uv publish`, then bump version in `__init__.py`.
+
+---
+
+### Testing Standards & Pre-Commit Requirements
+Quality and reliability are maintained through a strict test-driven development (TDD) approach.
+
+- **New Feature Testing:** Whenever new code or logic is added, corresponding tests must be created in the `tests/` directory to ensure coverage.
+- **Mocking Requirement:** All new tests must use mocks. Do not write tests that require real Google Cloud credentials or live API calls.
+- **Pre-Commit Verification:** Before executing any `git commit`, you must run the test suite and ensure all tests pass. 
+  - Run `pytest` to verify the entire project.
+  - Run `pytest -m <module>` to verify specific changes.
+- **Strict Rule:** Never commit code that causes a test failure or decreases existing test coverage.
 ```
 
 ---
