@@ -247,6 +247,9 @@ class GreyCloudBatch:
         blob_name = f"batch_requests/batch_{timestamp}.jsonl"
 
         # Convert requests to JSONL format
+        # Vertex AI batch uses the REST GenerateContentRequest schema:
+        #   contents, generationConfig, systemInstruction, safetySettings, labels
+        # Field names must be camelCase (REST API convention).
         jsonl_lines = []
         for request in batch_requests:
             # Convert contents to serializable format
@@ -255,52 +258,94 @@ class GreyCloudBatch:
                 if isinstance(content, dict):
                     contents_serializable.append(content)
                 else:
-                    # Convert Content object to dict
                     content_dict = {"role": content.role}
                     if hasattr(content, "parts") and content.parts:
                         parts_list = []
                         for part in content.parts:
                             if isinstance(part, dict):
                                 parts_list.append(part)
-                            elif hasattr(part, "text"):
+                            elif hasattr(part, "text") and part.text is not None:
                                 parts_list.append({"text": part.text})
-                            elif hasattr(part, "file_data"):
-                                parts_list.append({"file_data": part.file_data})
+                            elif hasattr(part, "file_data") and part.file_data is not None:
+                                parts_list.append({"fileData": part.file_data})
                         content_dict["parts"] = parts_list
                     contents_serializable.append(content_dict)
 
-            # Convert config to serializable format
-            config_serializable = None
+            request_inner = {
+                "model": request.model,
+                "contents": contents_serializable,
+            }
+
+            # Serialize generationConfig (camelCase field names, omit None values)
             if request.config:
                 if isinstance(request.config, dict):
-                    config_serializable = request.config
+                    request_inner["generationConfig"] = request.config
                 else:
-                    # Convert GenerateContentConfig to dict
-                    config_serializable = {}
-                    if hasattr(request.config, "temperature"):
-                        config_serializable["temperature"] = request.config.temperature
-                    if hasattr(request.config, "top_p"):
-                        config_serializable["top_p"] = request.config.top_p
-                    if hasattr(request.config, "max_output_tokens"):
-                        config_serializable["max_output_tokens"] = (
-                            request.config.max_output_tokens
-                        )
-                    if hasattr(request.config, "safety_settings"):
-                        config_serializable["safety_settings"] = (
-                            request.config.safety_settings
-                        )
+                    gen_config = {}
+                    cfg = request.config
+                    if getattr(cfg, "temperature", None) is not None:
+                        gen_config["temperature"] = cfg.temperature
+                    if getattr(cfg, "top_p", None) is not None:
+                        gen_config["topP"] = cfg.top_p
+                    if getattr(cfg, "top_k", None) is not None:
+                        gen_config["topK"] = cfg.top_k
+                    if getattr(cfg, "max_output_tokens", None) is not None:
+                        gen_config["maxOutputTokens"] = cfg.max_output_tokens
+                    if getattr(cfg, "candidate_count", None) is not None:
+                        gen_config["candidateCount"] = cfg.candidate_count
+                    if getattr(cfg, "stop_sequences", None):
+                        gen_config["stopSequences"] = cfg.stop_sequences
+                    if getattr(cfg, "response_mime_type", None) is not None:
+                        gen_config["responseMimeType"] = cfg.response_mime_type
+                    if getattr(cfg, "response_schema", None) is not None:
+                        gen_config["responseSchema"] = cfg.response_schema
+                    if getattr(cfg, "seed", None) is not None:
+                        gen_config["seed"] = cfg.seed
+                    # thinkingConfig is nested inside generationConfig
+                    thinking = getattr(cfg, "thinking_config", None)
+                    if thinking is not None:
+                        tc = {}
+                        if getattr(thinking, "thinking_budget", None) is not None:
+                            tc["thinkingBudget"] = thinking.thinking_budget
+                        if getattr(thinking, "thinking_level", None) is not None:
+                            tc["thinkingLevel"] = thinking.thinking_level
+                        if getattr(thinking, "include_thoughts", None) is not None:
+                            tc["includeThoughts"] = thinking.include_thoughts
+                        if tc:
+                            gen_config["thinkingConfig"] = tc
+                    if gen_config:
+                        request_inner["generationConfig"] = gen_config
 
-            # Convert InlinedRequest to dict format
-            request_dict = {
-                "request": {
-                    "model": request.model,
-                    "contents": contents_serializable,
-                }
-            }
-            if config_serializable:
-                request_dict["request"]["config"] = config_serializable
-            if hasattr(request, "metadata") and request.metadata:
-                request_dict["request"]["metadata"] = request.metadata
+                    # systemInstruction is a top-level request field, not inside generationConfig
+                    sys_instr = getattr(cfg, "system_instruction", None)
+                    if sys_instr:
+                        si_parts = []
+                        if isinstance(sys_instr, str):
+                            si_parts = [{"text": sys_instr}]
+                        elif isinstance(sys_instr, list):
+                            for p in sys_instr:
+                                if isinstance(p, str):
+                                    si_parts.append({"text": p})
+                                elif hasattr(p, "text") and p.text is not None:
+                                    si_parts.append({"text": p.text})
+                                elif isinstance(p, dict):
+                                    si_parts.append(p)
+                        if si_parts:
+                            request_inner["systemInstruction"] = {
+                                "role": "user",
+                                "parts": si_parts,
+                            }
+
+                    # safetySettings
+                    safety = getattr(cfg, "safety_settings", None)
+                    if safety:
+                        request_inner["safetySettings"] = safety
+
+            request_dict = {"request": request_inner}
+            # NOTE: InlinedRequest.metadata is NOT forwarded to the batch request.
+            # Vertex batch's GenerateContentRequest.labels field rejects numeric
+            # string values (parses them as integers, then fails proto validation).
+            # Use prompt-embedded ID tags (e.g. [SLICE_ID:...]) for request matching.
 
             jsonl_lines.append(json.dumps(request_dict))
 
