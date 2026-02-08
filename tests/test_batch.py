@@ -252,8 +252,7 @@ class TestGreyCloudBatch:
                 assert gcs_uri.startswith("gs://test-bucket/batch_requests/")
                 mock_blob.upload_from_string.assert_called_once()
 
-                # Verify JSONL format matches scripts that consume it: one line per request,
-                # each line a JSON object with "request" containing model, contents, optional config
+                # Verify JSONL format: Vertex AI REST schema with camelCase fields
                 call_args = mock_blob.upload_from_string.call_args
                 uploaded_content = call_args[0][0]
                 assert uploaded_content.startswith('{"request":')
@@ -262,9 +261,207 @@ class TestGreyCloudBatch:
                 obj = json.loads(lines[0])
                 assert "request" in obj
                 req = obj["request"]
-                assert "model" in req
-                assert "contents" in req
                 assert req["model"] == "gemini-3-pro-preview"
+                assert "contents" in req
+                # Config should be serialized as generationConfig (not "config")
+                assert "generationConfig" in req
+                assert "config" not in req
+                assert req["generationConfig"]["temperature"] == 0.2
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_camelcase_fields(self, sample_config):
+        """Test that JSONL serialization uses camelCase field names"""
+        batch_requests = [
+            types.InlinedRequest(
+                model="gemini-3-pro-preview",
+                contents=[{"role": "user", "parts": [{"text": "Test"}]}],
+                config=types.GenerateContentConfig(
+                    temperature=0.5,
+                    top_p=0.9,
+                    top_k=40,
+                    max_output_tokens=1024,
+                    candidate_count=1,
+                    stop_sequences=["END"],
+                    response_mime_type="application/json",
+                    seed=42,
+                ),
+            )
+        ]
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage") as mock_storage:
+                mock_storage_client = MagicMock()
+                mock_bucket = MagicMock()
+                mock_blob = MagicMock()
+                mock_storage.Client.return_value = mock_storage_client
+                mock_storage_client.bucket.return_value = mock_bucket
+                mock_bucket.blob.return_value = mock_blob
+
+                batch = GreyCloudBatch(sample_config)
+                batch.upload_batch_requests_to_gcs(
+                    batch_requests=batch_requests, bucket_name="test-bucket"
+                )
+
+                uploaded = mock_blob.upload_from_string.call_args[0][0]
+                req = json.loads(uploaded)["request"]
+                gen_cfg = req["generationConfig"]
+                assert gen_cfg["temperature"] == 0.5
+                assert gen_cfg["topP"] == 0.9
+                assert gen_cfg["topK"] == 40
+                assert gen_cfg["maxOutputTokens"] == 1024
+                assert gen_cfg["candidateCount"] == 1
+                assert gen_cfg["stopSequences"] == ["END"]
+                assert gen_cfg["responseMimeType"] == "application/json"
+                assert gen_cfg["seed"] == 42
+                # Must not contain snake_case versions
+                assert "top_p" not in gen_cfg
+                assert "max_output_tokens" not in gen_cfg
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_system_instruction(self, sample_config):
+        """Test that systemInstruction is serialized as top-level request field"""
+        batch_requests = [
+            types.InlinedRequest(
+                model="gemini-3-pro-preview",
+                contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+                config=types.GenerateContentConfig(
+                    system_instruction="You are a helpful assistant.",
+                    temperature=0.5,
+                ),
+            )
+        ]
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage") as mock_storage:
+                mock_storage_client = MagicMock()
+                mock_bucket = MagicMock()
+                mock_blob = MagicMock()
+                mock_storage.Client.return_value = mock_storage_client
+                mock_storage_client.bucket.return_value = mock_bucket
+                mock_bucket.blob.return_value = mock_blob
+
+                batch = GreyCloudBatch(sample_config)
+                batch.upload_batch_requests_to_gcs(
+                    batch_requests=batch_requests, bucket_name="test-bucket"
+                )
+
+                uploaded = mock_blob.upload_from_string.call_args[0][0]
+                req = json.loads(uploaded)["request"]
+                # systemInstruction is top-level, not inside generationConfig
+                assert "systemInstruction" in req
+                assert req["systemInstruction"]["role"] == "user"
+                assert req["systemInstruction"]["parts"] == [
+                    {"text": "You are a helpful assistant."}
+                ]
+                # Must not be inside generationConfig
+                assert "systemInstruction" not in req.get("generationConfig", {})
+                assert "system_instruction" not in req.get("generationConfig", {})
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_thinking_config(self, sample_config):
+        """Test that thinkingConfig is nested inside generationConfig"""
+        thinking = types.ThinkingConfig(thinking_budget=2048)
+        batch_requests = [
+            types.InlinedRequest(
+                model="gemini-3-pro-preview",
+                contents=[{"role": "user", "parts": [{"text": "Think"}]}],
+                config=types.GenerateContentConfig(
+                    temperature=0.5,
+                    thinking_config=thinking,
+                ),
+            )
+        ]
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage") as mock_storage:
+                mock_storage_client = MagicMock()
+                mock_bucket = MagicMock()
+                mock_blob = MagicMock()
+                mock_storage.Client.return_value = mock_storage_client
+                mock_storage_client.bucket.return_value = mock_bucket
+                mock_bucket.blob.return_value = mock_blob
+
+                batch = GreyCloudBatch(sample_config)
+                batch.upload_batch_requests_to_gcs(
+                    batch_requests=batch_requests, bucket_name="test-bucket"
+                )
+
+                uploaded = mock_blob.upload_from_string.call_args[0][0]
+                req = json.loads(uploaded)["request"]
+                gen_cfg = req["generationConfig"]
+                assert "thinkingConfig" in gen_cfg
+                assert gen_cfg["thinkingConfig"]["thinkingBudget"] == 2048
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_omits_none_values(self, sample_config):
+        """Test that None config values are omitted from JSONL"""
+        batch_requests = [
+            types.InlinedRequest(
+                model="gemini-3-pro-preview",
+                contents=[{"role": "user", "parts": [{"text": "Test"}]}],
+                config=types.GenerateContentConfig(temperature=0.5),
+            )
+        ]
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage") as mock_storage:
+                mock_storage_client = MagicMock()
+                mock_bucket = MagicMock()
+                mock_blob = MagicMock()
+                mock_storage.Client.return_value = mock_storage_client
+                mock_storage_client.bucket.return_value = mock_bucket
+                mock_bucket.blob.return_value = mock_blob
+
+                batch = GreyCloudBatch(sample_config)
+                batch.upload_batch_requests_to_gcs(
+                    batch_requests=batch_requests, bucket_name="test-bucket"
+                )
+
+                uploaded = mock_blob.upload_from_string.call_args[0][0]
+                req = json.loads(uploaded)["request"]
+                gen_cfg = req["generationConfig"]
+                # Only temperature should be present, not nulls for other fields
+                assert gen_cfg == {"temperature": 0.5}
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_no_metadata(self, sample_config):
+        """Test that InlinedRequest.metadata is NOT forwarded to JSONL"""
+        batch_requests = [
+            types.InlinedRequest(
+                model="gemini-3-pro-preview",
+                contents=[{"role": "user", "parts": [{"text": "Test"}]}],
+                metadata={"request_id": "123"},
+            )
+        ]
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage") as mock_storage:
+                mock_storage_client = MagicMock()
+                mock_bucket = MagicMock()
+                mock_blob = MagicMock()
+                mock_storage.Client.return_value = mock_storage_client
+                mock_storage_client.bucket.return_value = mock_bucket
+                mock_bucket.blob.return_value = mock_blob
+
+                batch = GreyCloudBatch(sample_config)
+                batch.upload_batch_requests_to_gcs(
+                    batch_requests=batch_requests, bucket_name="test-bucket"
+                )
+
+                uploaded = mock_blob.upload_from_string.call_args[0][0]
+                req = json.loads(uploaded)["request"]
+                assert "metadata" not in req
+                assert "labels" not in req
 
     @pytest.mark.batch
     @patch("greycloud.batch.GCS_AVAILABLE", True)

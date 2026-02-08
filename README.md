@@ -393,7 +393,7 @@ print(response.text)
 
 ### 5.9 Batch Processing with GCS
 
-Batch jobs use a GCS bucket for request input and result output. Set `batch_gcs_bucket` (and optionally `gcs_bucket` for general uploads). The batch API expects JSONL input: one line per request, each line a JSON object with a `request` key containing `model`, `contents`, and optional `config`/`metadata`. Results are written by Vertex to `predictions.jsonl` under the job’s destination prefix; `download_batch_results` finds and downloads that file.
+Batch jobs use a GCS bucket for request input and result output. Set `batch_gcs_bucket` (and optionally `gcs_bucket` for general uploads). The batch API expects JSONL input following the Vertex AI REST `GenerateContentRequest` schema: one line per request, each line a JSON object with a `request` key containing `model`, `contents`, and optional `generationConfig`, `systemInstruction`, and `safetySettings` (all camelCase). Note: `InlinedRequest.metadata` is **not** forwarded to batch JSONL because Vertex rejects numeric string values in proto label fields — use prompt-embedded ID tags (e.g. `[SLICE_ID:...]`) for request matching. Results are written by Vertex to `predictions.jsonl` under the job's destination prefix; `download_batch_results` finds and downloads that file.
 
 ```python
 from greycloud import GreyCloudConfig, GreyCloudBatch

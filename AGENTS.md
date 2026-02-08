@@ -65,10 +65,15 @@ This project uses a "floating tag" strategy for the current development version 
   `git push origin main --tags`
 
 #### Publishing to PyPI
+- **Full instructions:** See [`PUBLISHING.md`](PUBLISHING.md) for complete setup, token config, and first-time steps.
 - **Trigger:** Only publish to PyPI when explicitly requested.
 - **Build & Release:** Use `uv` for the publishing flow:
-  `uv build ; uv publish`
-- **Post-Publish Bump:** Immediately after a successful publish, increment the patch version (0.0.1) in `greycloud/__init__.py`.
+  ```bash
+  rm -rf dist/
+  uv build
+  uv publish   # uses UV_PUBLISH_TOKEN or ~/.pypirc token
+  ```
+- **Post-Publish Bump:** Immediately after a successful publish, increment the patch version (0.0.1) in both `greycloud/__init__.py` and `pyproject.toml`.
 - **New Version Cycle:** The very next commit must create the new tag corresponding to this bumped version and move that tag to the latest commit until the next release.
 
 #### Execution Summary for Agents
@@ -129,7 +134,7 @@ The logic is contained within five main modules in `greycloud/`:
 - **Markers:** Use `-m unit`, `integration`, `auth`, `batch`, or `cache` to filter tests.
 - **Token Management:** Token counting must gracefully fall back to character-based approximation if the API is unreachable.
 - **Retry Logic:** Always include automatic re-authentication on auth-related failures within the retry loop.
-- **Batch Format:** JSONL input must follow the structure: `{"request": {"model": ..., "contents": ..., "config": ...}}`.
+- **Batch Format:** JSONL input follows the Vertex AI REST schema: `{"request": {"model": ..., "contents": ..., "generationConfig": ..., "systemInstruction": ..., "safetySettings": ...}}`. All field names are camelCase. Metadata/labels are **not** forwarded (Vertex rejects numeric string label values).
 
 ## Landing the Plane (Session Completion)
 
