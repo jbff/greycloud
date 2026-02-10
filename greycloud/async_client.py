@@ -7,6 +7,10 @@ to enforce RPM, TPM, and concurrency limits.
 
 import asyncio
 import random
+import time
+import subprocess
+import sys
+import os
 from typing import List, Optional, Dict, Any, AsyncGenerator, Union
 
 from google import genai
@@ -46,6 +50,139 @@ class GreyCloudAsyncClient:
     def client(self) -> genai.Client:
         """Underlying genai.Client for advanced use. Prefer this client's methods for generation so rate limits are applied."""
         return self._client
+
+    def _force_reauth(self) -> bool:
+        """
+        Force re-authentication by calling gcloud auth application-default login
+
+        Returns:
+            bool: True if re-authentication succeeded, False otherwise
+        """
+        if self.config.use_api_key:
+            return False
+
+        if not self.config.auto_reauth:
+            return False
+
+        is_interactive = (
+            sys.stdin.isatty() if hasattr(sys.stdin, "isatty") else False
+        ) or os.environ.get("DISPLAY") is not None
+
+        try:
+            cmd = ["gcloud", "auth", "application-default", "login"]
+            if not is_interactive:
+                cmd.append("--no-browser")
+                cmd.append("--quiet")
+
+            result = subprocess.run(
+                cmd,
+                check=True,
+                capture_output=not is_interactive,
+                text=True,
+                timeout=(300 if is_interactive else 30),
+            )
+            return result.returncode == 0
+        except subprocess.TimeoutExpired:
+            return is_interactive
+        except subprocess.CalledProcessError as e:
+            error_output = ""
+            if hasattr(e, "stderr") and e.stderr:
+                error_output = e.stderr.lower()
+            if hasattr(e, "stdout") and e.stdout:
+                error_output += " " + e.stdout.lower()
+
+            if "already has" in error_output or "already authenticated" in error_output:
+                return True
+            return False
+        except FileNotFoundError:
+            return False
+        except Exception:
+            return False
+
+    def _is_authentication_error(self, error: Exception) -> bool:
+        """
+        Check if an error is related to authentication/authorization
+
+        Checks for:
+        - HTTP status codes 401 (Unauthorized) and 403 (Forbidden)
+        - Google Auth exceptions (RefreshError, etc.)
+        - Google API Core exceptions (Unauthenticated, PermissionDenied)
+        - Error messages containing authentication-related keywords
+        """
+        try:
+            from google.auth.exceptions import RefreshError, DefaultCredentialsError
+
+            if isinstance(error, (RefreshError, DefaultCredentialsError)):
+                return True
+        except ImportError:
+            error_type_name = type(error).__name__
+            if error_type_name in ("RefreshError", "DefaultCredentialsError"):
+                error_module = type(error).__module__
+                if "google.auth" in error_module or "google.oauth2" in error_module:
+                    return True
+
+        try:
+            from google.api_core.exceptions import Unauthenticated, PermissionDenied
+
+            if isinstance(error, (Unauthenticated, PermissionDenied)):
+                return True
+        except ImportError:
+            pass
+
+        current_error = error
+        error_chain = [current_error]
+        while hasattr(current_error, "__cause__") and current_error.__cause__:
+            current_error = current_error.__cause__
+            error_chain.append(current_error)
+        while hasattr(current_error, "__context__") and current_error.__context__:
+            current_error = current_error.__context__
+            error_chain.append(current_error)
+
+        for err in error_chain:
+            error_type_name = type(err).__name__
+            if (
+                "RefreshError" in error_type_name
+                or "DefaultCredentialsError" in error_type_name
+            ):
+                return True
+            if (
+                "Unauthenticated" in error_type_name
+                or "PermissionDenied" in error_type_name
+            ):
+                return True
+
+        for err in error_chain:
+            error_str = str(err).lower()
+            error_repr = repr(err).lower()
+            error_type = type(err).__name__.lower()
+            combined_error = f"{error_str} {error_repr} {error_type}"
+
+            auth_keywords = [
+                "401",
+                "unauthorized",
+                "403",
+                "forbidden",
+                "authentication",
+                "credential",
+                "token expired",
+                "token invalid",
+                "invalid token",
+                "expired token",
+                "unauthenticated",
+                "permission denied",
+                "reauth",
+                "reauthentication",
+                "application-default",
+                "gcloud auth application-default login",
+                "invalid_grant",
+                "invalid_credentials",
+                "access_denied",
+                "insufficient_permission",
+            ]
+            if any(keyword in combined_error for keyword in auth_keywords):
+                return True
+
+        return False
 
     def _estimate_prompt_tokens(self, contents: List[types.Content]) -> int:
         """Estimate token count from contents for rate limiter."""
@@ -274,7 +411,60 @@ class GreyCloudAsyncClient:
                         model=model_name, contents=contents, config=config
                     ),
                 )
-            except Exception:
+            except Exception as e:
+                is_auth_error = self._is_authentication_error(e)
+
+                if is_auth_error:
+                    if self.config.auto_reauth and not self.config.use_api_key:
+                        reauth_success = False
+                        try:
+                            reauth_success = self._force_reauth()
+                            if reauth_success:
+                                self._client = create_client(
+                                    project_id=self.config.project_id,
+                                    location=self.config.location,
+                                    sa_email=self.config.sa_email,
+                                    use_api_key=self.config.use_api_key,
+                                    api_key_file=self.config.api_key_file,
+                                    endpoint=self.config.endpoint,
+                                    api_version=self.config.api_version,
+                                    auto_reauth=False,
+                                )
+                            else:
+                                try:
+                                    self._client = create_client(
+                                        project_id=self.config.project_id,
+                                        location=self.config.location,
+                                        sa_email=self.config.sa_email,
+                                        use_api_key=self.config.use_api_key,
+                                        api_key_file=self.config.api_key_file,
+                                        endpoint=self.config.endpoint,
+                                        api_version=self.config.api_version,
+                                        auto_reauth=False,
+                                    )
+                                    reauth_success = True
+                                except Exception:
+                                    pass
+
+                            if reauth_success and attempt < max_retries:
+                                time.sleep(1)
+                                continue
+                            elif not reauth_success and attempt >= max_retries:
+                                raise RuntimeError(
+                                    f"Authentication error detected and automatic re-authentication failed after {max_retries + 1} attempts. "
+                                    "Please run 'gcloud auth application-default login' manually to refresh your credentials. "
+                                    f"Original error: {str(e)}"
+                                ) from e
+                            elif not reauth_success:
+                                pass
+                        except Exception as auth_error:
+                            if attempt >= max_retries:
+                                raise RuntimeError(
+                                    f"Re-authentication failed after {max_retries + 1} attempts: {str(auth_error)}. "
+                                    "Please run 'gcloud auth application-default login' manually. "
+                                    f"Original error: {str(e)}"
+                                ) from e
+
                 if attempt >= max_retries:
                     raise
                 delay = min(base_delay * (2**attempt), max_delay)
@@ -298,7 +488,60 @@ class GreyCloudAsyncClient:
                 ):
                     yield chunk
                 return
-            except Exception:
+            except Exception as e:
+                is_auth_error = self._is_authentication_error(e)
+
+                if is_auth_error:
+                    if self.config.auto_reauth and not self.config.use_api_key:
+                        reauth_success = False
+                        try:
+                            reauth_success = self._force_reauth()
+                            if reauth_success:
+                                self._client = create_client(
+                                    project_id=self.config.project_id,
+                                    location=self.config.location,
+                                    sa_email=self.config.sa_email,
+                                    use_api_key=self.config.use_api_key,
+                                    api_key_file=self.config.api_key_file,
+                                    endpoint=self.config.endpoint,
+                                    api_version=self.config.api_version,
+                                    auto_reauth=False,
+                                )
+                            else:
+                                try:
+                                    self._client = create_client(
+                                        project_id=self.config.project_id,
+                                        location=self.config.location,
+                                        sa_email=self.config.sa_email,
+                                        use_api_key=self.config.use_api_key,
+                                        api_key_file=self.config.api_key_file,
+                                        endpoint=self.config.endpoint,
+                                        api_version=self.config.api_version,
+                                        auto_reauth=False,
+                                    )
+                                    reauth_success = True
+                                except Exception:
+                                    pass
+
+                            if reauth_success and attempt < max_retries:
+                                time.sleep(1)
+                                continue
+                            elif not reauth_success and attempt >= max_retries:
+                                raise RuntimeError(
+                                    f"Authentication error detected and automatic re-authentication failed after {max_retries + 1} attempts. "
+                                    "Please run 'gcloud auth application-default login' manually to refresh your credentials. "
+                                    f"Original error: {str(e)}"
+                                ) from e
+                            elif not reauth_success:
+                                pass
+                        except Exception as auth_error:
+                            if attempt >= max_retries:
+                                raise RuntimeError(
+                                    f"Re-authentication failed after {max_retries + 1} attempts: {str(auth_error)}. "
+                                    "Please run 'gcloud auth application-default login' manually. "
+                                    f"Original error: {str(e)}"
+                                ) from e
+
                 if attempt >= max_retries:
                     raise
                 delay = min(base_delay * (2**attempt), max_delay)
