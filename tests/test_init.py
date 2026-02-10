@@ -16,7 +16,7 @@ class TestPackageInit:
 
     def test_version(self):
         """Test package version"""
-        assert __version__ == "0.3.3"
+        assert __version__ == "0.3.4"
 
     def test_all_exports(self):
         """Test __all__ exports"""
