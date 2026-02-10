@@ -409,3 +409,55 @@ class TestGreyCloudAsyncClientRetry:
                 chunks.append(chunk)
             assert chunks == ["OK", "OK"]
             assert call_count == 2
+
+
+class TestGreyCloudAsyncClientAuthError:
+    """Tests for authentication error detection and re-auth"""
+
+    def test_is_authentication_error(self, async_sample_config):
+        """Test authentication error detection"""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+
+            auth_errors = [
+                Exception("401 Unauthorized"),
+                Exception("403 Forbidden"),
+                Exception("authentication failed"),
+                Exception("token expired"),
+                Exception("permission denied"),
+            ]
+
+            for error in auth_errors:
+                assert client._is_authentication_error(error) is True
+
+            non_auth_errors = [
+                Exception("Network error"),
+                Exception("Timeout"),
+                ValueError("Invalid input"),
+            ]
+
+            for error in non_auth_errors:
+                assert client._is_authentication_error(error) is False
+
+    def test_force_reauth_with_api_key(self, async_sample_config):
+        """Force re-auth returns False when using API key"""
+        config = GreyCloudConfig(
+            project_id="test-project-id",
+            location="us-east4",
+            use_api_key=True,
+        )
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(config)
+            assert client._force_reauth() is False
+
+    def test_force_reauth_disabled(self, async_sample_config):
+        """Force re-auth returns False when auto_reauth is False"""
+        config = GreyCloudConfig(
+            project_id="test-project-id",
+            location="us-east4",
+            use_api_key=False,
+            auto_reauth=False,
+        )
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(config)
+            assert client._force_reauth() is False
