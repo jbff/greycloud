@@ -13,7 +13,7 @@ from .cache import GreyCloudCache
 from .rate_limiter import VertexRateLimiter
 from .async_client import GreyCloudAsyncClient
 
-__version__ = "0.3.4"
+__version__ = "0.3.5"
 __all__ = [
     "GreyCloudConfig",
     "GreyCloudClient",
