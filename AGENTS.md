@@ -65,24 +65,41 @@ This project uses a "floating tag" strategy for the current development version 
   `git push origin main --tags`
 
 #### Publishing to PyPI
-- **Full instructions:** See [`PUBLISHING.md`](PUBLISHING.md) for complete setup, token config, and first-time steps.
+
+> **Version history note:** Versions 0.3.0 through 0.3.3 were published with
+> mismatched version numbers, broken tags, or other release hygiene issues
+> caused by automated tooling errors. **0.3.4 is the first coherent release
+> in the 0.3.x series.** We apologize for the mess — please use 0.3.4+.
+
 - **Trigger:** Only publish to PyPI when explicitly requested.
-- **Build & Release:** Use `uv` for the publishing flow:
-  ```bash
-  rm -rf dist/
-  uv build
-  uv publish   # uses UV_PUBLISH_TOKEN or ~/.pypirc token
-  ```
-- **Post-Publish Bump:** Immediately after a successful publish, increment the patch version (0.0.1) in both `greycloud/__init__.py` and `pyproject.toml`.
-- **New Version Cycle:** The very next commit must create the new tag corresponding to this bumped version and move that tag to the latest commit until the next release.
+- **Token:** PyPI API token lives in `~/.pypirc`. Pass it via `UV_PUBLISH_TOKEN` env var or let `uv` read `~/.pypirc` directly.
+- **Critical order — commit and tag BEFORE building:**
+  1. Ensure version matches in all three files: `greycloud/__init__.py`, `pyproject.toml`, `tests/test_init.py`
+  2. Run `pytest` — all tests must pass
+  3. Commit the release version
+  4. Tag that commit: `git tag v<version>`
+  5. Build and publish from the tagged commit:
+     ```bash
+     rm -rf dist/
+     uv build
+     UV_PUBLISH_TOKEN="$(python3 -c "import configparser; c=configparser.ConfigParser(); c.read('$HOME/.pypirc'); print(c['pypi']['password'])")" uv publish
+     ```
+  6. **Then** bump patch version (e.g. 0.3.4 → 0.3.5) in all three files
+  7. Commit and tag the bump
+  8. Push: `git push origin <branch> --tags`
+
+  **If you build before committing, the PyPI artifact won't match the git tag source.**
+
+- **Post-Publish Bump:** Increment patch version in `greycloud/__init__.py`, `pyproject.toml`, **and** `tests/test_init.py`. All three must always match.
 
 #### Execution Summary for Agents
 1. Make code changes.
-2. Read `greycloud/__init__.py` to get `current_version`.
-3. Commit changes.
-4. Update/Create tag: `git tag -f <current_version>`.
-5. Push: `git push origin <branch> --tags`.
-6. If publishing: Run `uv build ; uv publish`, then bump version in `__init__.py`.
+2. Update version in `__init__.py`, `pyproject.toml`, and `tests/test_init.py` (all must match).
+3. Run `pytest` — must pass.
+4. Commit changes.
+5. Tag: `git tag v<version>`.
+6. If publishing: `rm -rf dist/ && uv build && uv publish`, then bump version in all three files, commit, tag.
+7. Push: `git push origin <branch> --tags`.
 
 ---
 
