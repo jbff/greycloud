@@ -27,8 +27,8 @@ MIN_TOKENS_BY_MODEL = {
     "gemini-2.0": 2048,
     "gemini-2.5-flash": 1024,
     "gemini-2.5-pro": 4096,
-    "gemini-3-flash": 1024,
-    "gemini-3-pro": 4096,
+    "gemini-3.1-flash": 1024,
+    "gemini-3.1-pro": 4096,
 }
 
 # Default minimum if model not recognized

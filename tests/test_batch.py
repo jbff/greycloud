@@ -227,7 +227,7 @@ class TestGreyCloudBatch:
         """Test batch requests upload"""
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-3-pro-preview",
+                model="gemini-3.1-pro-preview",
                 contents=[{"role": "user", "parts": [{"text": "Test"}]}],
                 config=types.GenerateContentConfig(temperature=0.2),
             )
@@ -261,7 +261,7 @@ class TestGreyCloudBatch:
                 obj = json.loads(lines[0])
                 assert "request" in obj
                 req = obj["request"]
-                assert req["model"] == "gemini-3-pro-preview"
+                assert req["model"] == "gemini-3.1-pro-preview"
                 assert "contents" in req
                 # Config should be serialized as generationConfig (not "config")
                 assert "generationConfig" in req
@@ -274,7 +274,7 @@ class TestGreyCloudBatch:
         """Test that JSONL serialization uses camelCase field names"""
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-3-pro-preview",
+                model="gemini-3.1-pro-preview",
                 contents=[{"role": "user", "parts": [{"text": "Test"}]}],
                 config=types.GenerateContentConfig(
                     temperature=0.5,
@@ -325,7 +325,7 @@ class TestGreyCloudBatch:
         """Test that systemInstruction is serialized as top-level request field"""
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-3-pro-preview",
+                model="gemini-3.1-pro-preview",
                 contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
                 config=types.GenerateContentConfig(
                     system_instruction="You are a helpful assistant.",
@@ -368,7 +368,7 @@ class TestGreyCloudBatch:
         thinking = types.ThinkingConfig(thinking_budget=2048)
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-3-pro-preview",
+                model="gemini-3.1-pro-preview",
                 contents=[{"role": "user", "parts": [{"text": "Think"}]}],
                 config=types.GenerateContentConfig(
                     temperature=0.5,
@@ -404,7 +404,7 @@ class TestGreyCloudBatch:
         """Test that None config values are omitted from JSONL"""
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-3-pro-preview",
+                model="gemini-3.1-pro-preview",
                 contents=[{"role": "user", "parts": [{"text": "Test"}]}],
                 config=types.GenerateContentConfig(temperature=0.5),
             )
@@ -437,7 +437,7 @@ class TestGreyCloudBatch:
         """Test that InlinedRequest.metadata is NOT forwarded to JSONL"""
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-3-pro-preview",
+                model="gemini-3.1-pro-preview",
                 contents=[{"role": "user", "parts": [{"text": "Test"}]}],
                 metadata={"request_id": "123"},
             )
@@ -469,7 +469,7 @@ class TestGreyCloudBatch:
         """Test batch job creation"""
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-3-pro-preview",
+                model="gemini-3.1-pro-preview",
                 contents=[{"role": "user", "parts": [{"text": "Test"}]}],
                 config=types.GenerateContentConfig(),
             )

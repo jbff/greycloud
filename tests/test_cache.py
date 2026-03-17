@@ -29,13 +29,13 @@ class TestGetMinTokensForModel:
 
     def test_gemini_3_flash(self):
         """Gemini 3 Flash requires 1024 tokens"""
-        assert get_min_tokens_for_model("gemini-3-flash") == 1024
-        assert get_min_tokens_for_model("gemini-3-flash-preview") == 1024
+        assert get_min_tokens_for_model("gemini-3.1-flash") == 1024
+        assert get_min_tokens_for_model("gemini-3.1-flash-preview") == 1024
 
     def test_gemini_3_pro(self):
         """Gemini 3 Pro requires 4096 tokens"""
-        assert get_min_tokens_for_model("gemini-3-pro") == 4096
-        assert get_min_tokens_for_model("gemini-3-pro-preview") == 4096
+        assert get_min_tokens_for_model("gemini-3.1-pro") == 4096
+        assert get_min_tokens_for_model("gemini-3.1-pro-preview") == 4096
 
     def test_gemini_2_0(self):
         """Gemini 2.0 requires 2048 tokens"""
@@ -48,7 +48,7 @@ class TestGetMinTokensForModel:
     def test_case_insensitive(self):
         """Model name matching is case insensitive"""
         assert get_min_tokens_for_model("GEMINI-2.5-FLASH") == 1024
-        assert get_min_tokens_for_model("Gemini-3-Pro") == 4096
+        assert get_min_tokens_for_model("gemini-3.1-pro") == 4096
 
 
 class TestGreyCloudCacheInit:
@@ -581,7 +581,7 @@ class TestGreyCloudCacheGetCacheInfo:
         mock_cache = MagicMock(spec=types.CachedContent)
         mock_cache.name = "cachedContents/test-cache"
         mock_cache.display_name = "Test Cache"
-        mock_cache.model = "gemini-3-flash-preview"
+        mock_cache.model = "gemini-3.1-flash-preview"
         mock_cache.create_time = datetime.datetime(2024, 1, 1, 12, 0, 0)
         mock_cache.expire_time = datetime.datetime(2024, 1, 1, 13, 0, 0)
 
@@ -593,7 +593,7 @@ class TestGreyCloudCacheGetCacheInfo:
 
         assert info["name"] == "cachedContents/test-cache"
         assert info["display_name"] == "Test Cache"
-        assert info["model"] == "gemini-3-flash-preview"
+        assert info["model"] == "gemini-3.1-flash-preview"
         assert info["total_token_count"] == 50000
 
 
