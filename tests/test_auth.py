@@ -221,3 +221,96 @@ class TestCreateClient:
             http_options = call_kwargs["http_options"]
             assert http_options.base_url == "https://custom-endpoint.com"
             assert http_options.api_version == "v2"
+
+    @pytest.mark.auth
+    @patch("greycloud.auth.HAS_GOOGLE_AUTH", True)
+    @patch("greycloud.auth.google.auth")
+    def test_create_client_reauth_on_expired_error(self, mock_auth):
+        """Test that 'expired' in error message triggers re-authentication.
+
+        Google Auth errors like 'credentials expired' or 'Reauthentication is needed'
+        should trigger automatic re-authentication, not just 'application-default'.
+        """
+        import subprocess
+
+        # Simulate authentication error
+        mock_auth.default.side_effect = Exception("No credentials")
+
+        call_count = [0]
+
+        def check_output_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call: fail with 'expired' error
+                error = subprocess.CalledProcessError(
+                    1, "gcloud", stderr=b"Your credentials have expired"
+                )
+                raise error
+            return "new-token"
+
+        with patch(
+            "greycloud.auth.subprocess.check_output",
+            side_effect=check_output_side_effect,
+        ):
+            with patch(
+                "greycloud.auth.subprocess.run", return_value=MagicMock(returncode=0)
+            ):
+                with patch("greycloud.auth.genai") as mock_genai:
+                    mock_client = MagicMock()
+                    mock_genai.Client.return_value = mock_client
+
+                    client = create_client(
+                        project_id="test-project",
+                        location="us-east4",
+                        use_api_key=False,
+                        auto_reauth=True,
+                    )
+
+                    # Should have attempted re-authentication
+                    assert call_count[0] >= 2, "Should retry after seeing 'expired' error"
+
+    @pytest.mark.auth
+    @patch("greycloud.auth.HAS_GOOGLE_AUTH", True)
+    @patch("greycloud.auth.google.auth")
+    def test_create_client_reauth_on_reauthentication_is_needed_error(self, mock_auth):
+        """Test that 'Reauthentication is needed' error triggers re-authentication.
+
+        This is a common Google Auth error message that should trigger auto re-auth.
+        """
+        import subprocess
+
+        # Simulate authentication error
+        mock_auth.default.side_effect = Exception("No credentials")
+
+        call_count = [0]
+
+        def check_output_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call: fail with 'Reauthentication is needed' error
+                error = subprocess.CalledProcessError(
+                    1, "gcloud", stderr=b"Reauthentication is needed. Please run: gcloud auth application-default login"
+                )
+                raise error
+            return "new-token"
+
+        with patch(
+            "greycloud.auth.subprocess.check_output",
+            side_effect=check_output_side_effect,
+        ):
+            with patch(
+                "greycloud.auth.subprocess.run", return_value=MagicMock(returncode=0)
+            ):
+                with patch("greycloud.auth.genai") as mock_genai:
+                    mock_client = MagicMock()
+                    mock_genai.Client.return_value = mock_client
+
+                    client = create_client(
+                        project_id="test-project",
+                        location="us-east4",
+                        use_api_key=False,
+                        auto_reauth=True,
+                    )
+
+                    # Should have attempted re-authentication
+                    assert call_count[0] >= 2, "Should retry after seeing 'Reauthentication is needed' error"

@@ -1,5 +1,8 @@
 """Tests for GreyCloudAsyncClient"""
 
+import os
+import sys
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from google.genai import types
@@ -439,6 +442,26 @@ class TestGreyCloudAsyncClientAuthError:
             for error in non_auth_errors:
                 assert client._is_authentication_error(error) is False
 
+    def test_is_authentication_error_detects_expired_keyword(self, async_sample_config):
+        """Test that 'expired' by itself triggers auth error detection.
+
+        Google Auth errors like 'Reauthentication is needed' often contain
+        'expired' without the 'token' prefix. This test verifies we catch those.
+        """
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+
+            expired_errors = [
+                Exception("credentials expired"),
+                Exception("session expired"),
+                Exception("token expired"),
+                Exception("Your credentials have expired"),
+                Exception("Reauthentication is needed - credentials expired"),
+            ]
+
+            for error in expired_errors:
+                assert client._is_authentication_error(error) is True, f"Should detect 'expired' in: {error}"
+
     def test_force_reauth_with_api_key(self, async_sample_config):
         """Force re-auth returns False when using API key"""
         config = GreyCloudConfig(
@@ -461,3 +484,79 @@ class TestGreyCloudAsyncClientAuthError:
         with patch("greycloud.async_client.create_client"):
             client = GreyCloudAsyncClient(config)
             assert client._force_reauth() is False
+
+    def test_force_reauth_allows_user_interaction(self, async_sample_config):
+        """Force re-auth allows user to see gcloud prompts.
+
+        When re-authentication is needed, gcloud prints a URL for the user to
+        visit in their browser. We must NOT suppress this output with --quiet
+        or capture_output=True, otherwise the user cannot complete the flow.
+        """
+        import subprocess
+
+        config = GreyCloudConfig(
+            project_id="test-project-id",
+            location="us-east4",
+            use_api_key=False,
+            auto_reauth=True,
+        )
+
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(config)
+
+            with patch("greycloud.async_client.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+
+                # Simulate interactive environment (has DISPLAY or TTY)
+                with patch.dict(os.environ, {"DISPLAY": ":0"}):
+                    result = client._force_reauth()
+
+                    assert result is True
+                    mock_run.assert_called_once()
+                    call_args = mock_run.call_args
+
+                    # Check the command does NOT include --quiet
+                    cmd = call_args[0][0]
+                    assert "--quiet" not in cmd, "gcloud command should NOT use --quiet (suppresses user interaction)"
+
+                    # Check capture_output is False to allow user to see prompts
+                    assert call_args[1].get("capture_output") is False, "capture_output should be False to show gcloud URL/prompts to user"
+
+    def test_force_reauth_non_interactive_uses_no_browser(self, async_sample_config):
+        """Force re-auth uses --no-browser (not --quiet) in non-interactive mode.
+
+        In non-interactive environments, we should use --no-browser to get a URL
+        the user can visit manually, but still NOT use --quiet so they can see it.
+        """
+        import subprocess
+
+        config = GreyCloudConfig(
+            project_id="test-project-id",
+            location="us-east4",
+            use_api_key=False,
+            auto_reauth=True,
+        )
+
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(config)
+
+            with patch("greycloud.async_client.subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+
+                # Simulate non-interactive environment (no DISPLAY, no TTY)
+                with patch.dict(os.environ, {}, clear=True):
+                    with patch("sys.stdin") as mock_stdin:
+                        mock_stdin.isatty.return_value = False
+                        result = client._force_reauth()
+
+                        assert result is True
+                        mock_run.assert_called_once()
+                        call_args = mock_run.call_args
+                        cmd = call_args[0][0]
+
+                        # Should use --no-browser in non-interactive mode
+                        assert "--no-browser" in cmd, "Should use --no-browser in non-interactive mode"
+                        # Should NOT use --quiet
+                        assert "--quiet" not in cmd, "Should NOT use --quiet even in non-interactive mode"
+                        # capture_output should be False
+                        assert call_args[1].get("capture_output") is False, "capture_output should be False"

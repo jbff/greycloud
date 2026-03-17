@@ -146,6 +146,7 @@ def create_client(
                     "application-default" in error_str
                     or "reauth" in error_str
                     or "login" in error_str
+                    or "expired" in error_str
                 ):
                     # Try to automatically run gcloud auth application-default login
                     try:

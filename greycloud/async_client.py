@@ -72,14 +72,15 @@ class GreyCloudAsyncClient:
             cmd = ["gcloud", "auth", "application-default", "login"]
             if not is_interactive:
                 cmd.append("--no-browser")
-                cmd.append("--quiet")
+            # Note: We do NOT use --quiet and always use capture_output=False
+            # so the user can see the gcloud URL/prompts and complete authentication
 
             result = subprocess.run(
                 cmd,
                 check=True,
-                capture_output=not is_interactive,
+                capture_output=False,
                 text=True,
-                timeout=(300 if is_interactive else 30),
+                timeout=300,
             )
             return result.returncode == 0
         except subprocess.TimeoutExpired:
@@ -168,6 +169,7 @@ class GreyCloudAsyncClient:
                 "token invalid",
                 "invalid token",
                 "expired token",
+                "expired",
                 "unauthenticated",
                 "permission denied",
                 "reauth",
