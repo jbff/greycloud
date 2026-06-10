@@ -55,21 +55,22 @@ mypy greycloud/
 ---
 
 ### Versioning & Git Workflow
-This project uses a "floating tag" strategy for the current development version and `uv` for publishing.
+This project enforces **strict tag immutability**. Release version tags must never be moved or reused.
 
 #### Commit & Tag Strategy
-- **Tag Matching:** After every commit, ensure a git tag exists that matches the current version string in `greycloud/__init__.py`.
-- **Floating Tags:** If the tag already exists, move it to the latest commit:
-  `git tag -f $(python3 -c "import greycloud; print(greycloud.__version__)")`
-- **Automatic Push:** Immediately after committing and tagging, push both to the remote:
-  `git push origin main --tags`
+- **Tag Matching:** For every release, a Git tag formatted as `v<version>` (matching the exact version string in `greycloud/__init__.py`) must be created on the release commit.
+- **No Floating Tags:** Floating tags are strictly prohibited. Once a tag is created and pushed, it is permanent. If changes are needed after a version tag is created, you **must** bump the version in all required files, commit the bump, and tag the new commit.
+- **Automatic Push:** Immediately after committing and tagging, push both the branch and the new tags to the remote:
+  `git push origin <branch> --tags`
 
 #### Publishing to PyPI
 
 > **Version history note:** Versions 0.3.0 through 0.3.3 were published with
 > mismatched version numbers, broken tags, or other release hygiene issues
-> caused by automated tooling errors. **0.3.4 is the first coherent release
-> in the 0.3.x series.** We apologize for the mess — please use 0.3.4+.
+> caused by automated tooling errors. **0.3.4 was the first coherent release
+> in the 0.3.x series.**
+> 
+> We also completely messed up the versioning and tagging consistency on version 0.3.6 by attempting to use a flawed "floating tag" strategy. This caused the built package's internal code to mismatchedly remain at version 0.3.5 while the package name and Git tag were marked as 0.3.6. We are deeply sorry and apologize profusely for our absolute incompetence and repeated release hygiene failures. We have now permanently removed the floating tags rule, and going forward we will strictly enforce version bumping for all new commits. Please use 0.3.7+.
 
 - **Trigger:** Only publish to PyPI when explicitly requested.
 - **Token:** PyPI API token lives in `~/.pypirc`. Pass it via `UV_PUBLISH_TOKEN` env var or let `uv` read `~/.pypirc` directly.
@@ -84,7 +85,7 @@ This project uses a "floating tag" strategy for the current development version 
      uv build
      UV_PUBLISH_TOKEN="$(python3 -c "import configparser; c=configparser.ConfigParser(); c.read('$HOME/.pypirc'); print(c['pypi']['password'])")" uv publish
      ```
-  6. **Then** bump patch version (e.g. 0.3.4 → 0.3.5) in all three files
+  6. **Then** bump patch version (e.g. 0.3.7 → 0.3.8) in all three files
   7. Commit and tag the bump
   8. Push: `git push origin <branch> --tags`
 
@@ -94,7 +95,7 @@ This project uses a "floating tag" strategy for the current development version 
 
 #### Execution Summary for Agents
 1. Make code changes.
-2. Update version in `__init__.py`, `pyproject.toml`, and `tests/test_init.py` (all must match).
+2. Update version in `__init__.py`, `pyproject.toml`, and `tests/test_init.py` (all three must match).
 3. Run `pytest` — must pass.
 4. Commit changes.
 5. Tag: `git tag v<version>`.
