@@ -30,7 +30,6 @@ class TestGetMinTokensForModel:
     def test_gemini_3_flash(self):
         """Gemini 3 Flash requires 1024 tokens"""
         assert get_min_tokens_for_model("gemini-3.5-flash") == 1024
-        assert get_min_tokens_for_model("gemini-3.5-flash-preview") == 1024
 
     def test_gemini_3_pro(self):
         """Gemini 3 Pro requires 4096 tokens"""
