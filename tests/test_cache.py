@@ -29,8 +29,8 @@ class TestGetMinTokensForModel:
 
     def test_gemini_3_flash(self):
         """Gemini 3 Flash requires 1024 tokens"""
-        assert get_min_tokens_for_model("gemini-3.1-flash") == 1024
-        assert get_min_tokens_for_model("gemini-3.1-flash-preview") == 1024
+        assert get_min_tokens_for_model("gemini-3.5-flash") == 1024
+        assert get_min_tokens_for_model("gemini-3.5-flash-preview") == 1024
 
     def test_gemini_3_pro(self):
         """Gemini 3 Pro requires 4096 tokens"""
@@ -581,7 +581,7 @@ class TestGreyCloudCacheGetCacheInfo:
         mock_cache = MagicMock(spec=types.CachedContent)
         mock_cache.name = "cachedContents/test-cache"
         mock_cache.display_name = "Test Cache"
-        mock_cache.model = "gemini-3.1-flash-preview"
+        mock_cache.model = "gemini-3.5-flash"
         mock_cache.create_time = datetime.datetime(2024, 1, 1, 12, 0, 0)
         mock_cache.expire_time = datetime.datetime(2024, 1, 1, 13, 0, 0)
 
@@ -593,7 +593,7 @@ class TestGreyCloudCacheGetCacheInfo:
 
         assert info["name"] == "cachedContents/test-cache"
         assert info["display_name"] == "Test Cache"
-        assert info["model"] == "gemini-3.1-flash-preview"
+        assert info["model"] == "gemini-3.5-flash"
         assert info["total_token_count"] == 50000
 
 
