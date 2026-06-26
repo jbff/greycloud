@@ -184,9 +184,19 @@ response = client.generate_content(
 
 ### 5.3 Streaming Generation
 
+By default, streaming yields plain text strings representing the generated content chunks:
+
 ```python
 for chunk in client.generate_content_stream(contents):
     print(chunk, end="", flush=True)
+```
+
+If you need access to candidate metadata, usage metrics, or safety ratings, you can pass `return_chunks=True` to yield the raw `GenerateContentResponse` chunk objects instead of strings:
+
+```python
+for chunk in client.generate_content_stream(contents, return_chunks=True):
+    # chunk is a google.genai.types.GenerateContentResponse object
+    print(chunk.text, end="", flush=True)
 ```
 
 ### 5.4 Automatic Retry & Auth Recovery
@@ -219,6 +229,18 @@ for chunk in client.generate_with_retry(
     streaming=True,
 ):
     print(chunk, end="", flush=True)
+```
+
+To stream raw response chunk objects with retry logic, pass `return_chunks=True`:
+
+```python
+for chunk in client.generate_with_retry(
+    contents,
+    max_retries=5,
+    streaming=True,
+    return_chunks=True,
+):
+    print(chunk.text, end="", flush=True)
 ```
 
 ### 5.5 Token Counting with Fallback
