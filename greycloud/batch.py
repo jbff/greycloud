@@ -266,7 +266,10 @@ class GreyCloudBatch:
                                 parts_list.append(part)
                             elif hasattr(part, "text") and part.text is not None:
                                 parts_list.append({"text": part.text})
-                            elif hasattr(part, "file_data") and part.file_data is not None:
+                            elif (
+                                hasattr(part, "file_data")
+                                and part.file_data is not None
+                            ):
                                 parts_list.append({"fileData": part.file_data})
                         content_dict["parts"] = parts_list
                     contents_serializable.append(content_dict)

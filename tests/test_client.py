@@ -101,6 +101,62 @@ class TestGreyCloudClient:
 
             assert chunks == ["Hello ", "World"]
 
+    def test_generate_content_stream_return_chunks(
+        self, sample_config, sample_contents
+    ):
+        """Test streaming content generation with return_chunks=True"""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.candidates[0].content.parts[0].text = "Hello "
+        mock_chunk.text = "Hello "
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.return_value = [mock_chunk]
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            chunks = list(
+                client.generate_content_stream(sample_contents, return_chunks=True)
+            )
+
+            assert len(chunks) == 1
+            assert chunks[0] == mock_chunk
+            # Verify candidate/part metadata is present
+            assert chunks[0].candidates is not None
+            assert chunks[0].candidates[0].content is not None
+            assert chunks[0].candidates[0].content.parts is not None
+            assert chunks[0].candidates[0].content.parts[0].text == "Hello "
+
+    def test_generate_with_retry_streaming_return_chunks(
+        self, sample_config, sample_contents
+    ):
+        """Test generate_with_retry with streaming and return_chunks=True"""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.candidates[0].content.parts[0].text = "Test"
+        mock_chunk.text = "Test"
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.return_value = [mock_chunk]
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            chunks = list(
+                client.generate_with_retry(
+                    sample_contents, streaming=True, return_chunks=True
+                )
+            )
+
+            assert len(chunks) == 1
+            assert chunks[0] == mock_chunk
+            assert chunks[0].candidates[0].content.parts[0].text == "Test"
+
     def test_generate_content_stream_empty_chunks(self, sample_config, sample_contents):
         """Test streaming with empty chunks"""
         mock_chunk = MagicMock()

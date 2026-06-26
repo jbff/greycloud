@@ -4,7 +4,7 @@ Main GreyCloud client for content generation and interaction
 
 import time
 import random
-from typing import List, Optional, Generator, Dict, Any
+from typing import List, Optional, Generator, Dict, Any, Union
 from google import genai
 from google.genai import types
 
@@ -364,8 +364,9 @@ class GreyCloudClient:
         tools: Optional[List[types.Tool]] = None,
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
+        return_chunks: bool = False,
         **kwargs,
-    ) -> Generator[str, None, None]:
+    ) -> Generator[Union[str, types.GenerateContentResponse], None, None]:
         """
         Generate content (streaming)
 
@@ -380,10 +381,11 @@ class GreyCloudClient:
             tools: Tools override
             thinking_level: Thinking level override
             cached_content: Cache name to use for context (see GreyCloudCache)
+            return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings
             **kwargs: Additional parameters for GenerateContentConfig
 
         Yields:
-            str: Chunks of response text
+            Union[str, types.GenerateContentResponse]: Chunks of response text or raw response objects
         """
         model_name = model or self.config.model
         config = self._build_generate_config(
@@ -403,14 +405,17 @@ class GreyCloudClient:
             contents=contents,
             config=config,
         ):
-            if (
-                chunk.candidates
-                and chunk.candidates[0].content
-                and chunk.candidates[0].content.parts
-            ):
-                chunk_text = chunk.text
-                if chunk_text:
-                    yield chunk_text
+            if return_chunks:
+                yield chunk
+            else:
+                if (
+                    chunk.candidates
+                    and chunk.candidates[0].content
+                    and chunk.candidates[0].content.parts
+                ):
+                    chunk_text = chunk.text
+                    if chunk_text:
+                        yield chunk_text
 
     def count_tokens(
         self,
@@ -569,6 +574,7 @@ class GreyCloudClient:
         contents: List[types.Content],
         max_retries: int = 5,
         streaming: bool = False,
+        return_chunks: bool = False,
         **generate_kwargs,
     ) -> Any:
         """
@@ -578,10 +584,11 @@ class GreyCloudClient:
             contents: List of Content objects
             max_retries: Maximum number of retry attempts
             streaming: If True, use streaming generation
+            return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings (only when streaming=True)
             **generate_kwargs: Additional arguments for generate_content or generate_content_stream
 
         Returns:
-            GenerateContentResponse (if streaming=False) or Generator[str] (if streaming=True)
+            GenerateContentResponse (if streaming=False) or Generator[Union[str, types.GenerateContentResponse]] (if streaming=True)
         """
         for attempt in range(max_retries + 1):
             try:
@@ -590,7 +597,7 @@ class GreyCloudClient:
                     # But we can't easily retry a generator, so we'll collect first
                     chunks = []
                     for chunk in self.generate_content_stream(
-                        contents, **generate_kwargs
+                        contents, return_chunks=return_chunks, **generate_kwargs
                     ):
                         chunks.append(chunk)
 

@@ -208,6 +208,71 @@ class TestGreyCloudAsyncClientGenerateContentStream:
             assert chunks == ["Hello ", "World"]
 
     @pytest.mark.asyncio
+    async def test_generate_content_stream_return_chunks(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_content_stream yields raw chunks from stream if return_chunks=True"""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.candidates[0].content.parts[0].text = "Hello"
+        mock_chunk.text = "Hello"
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(mock_chunk)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            chunks = []
+            async for chunk in client.generate_content_stream(
+                contents, return_chunks=True
+            ):
+                chunks.append(chunk)
+            assert len(chunks) == 1
+            assert chunks[0] == mock_chunk
+            assert chunks[0].candidates is not None
+            assert chunks[0].candidates[0].content.parts[0].text == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_generate_with_retry_streaming_return_chunks(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_with_retry yields raw chunks if return_chunks=True"""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.candidates[0].content.parts[0].text = "Hello"
+        mock_chunk.text = "Hello"
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(mock_chunk)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            stream = await client.generate_with_retry(
+                contents, streaming=True, return_chunks=True
+            )
+            chunks = []
+            async for chunk in stream:
+                chunks.append(chunk)
+            assert len(chunks) == 1
+            assert chunks[0] == mock_chunk
+            assert chunks[0].candidates is not None
+            assert chunks[0].candidates[0].content.parts[0].text == "Hello"
+
+    @pytest.mark.asyncio
     async def test_generate_content_stream_uses_rate_limiter(
         self, async_sample_config, mock_async_genai_client
     ):
@@ -460,7 +525,9 @@ class TestGreyCloudAsyncClientAuthError:
             ]
 
             for error in expired_errors:
-                assert client._is_authentication_error(error) is True, f"Should detect 'expired' in: {error}"
+                assert (
+                    client._is_authentication_error(error) is True
+                ), f"Should detect 'expired' in: {error}"
 
     def test_force_reauth_with_api_key(self, async_sample_config):
         """Force re-auth returns False when using API key"""
@@ -517,10 +584,14 @@ class TestGreyCloudAsyncClientAuthError:
 
                     # Check the command does NOT include --quiet
                     cmd = call_args[0][0]
-                    assert "--quiet" not in cmd, "gcloud command should NOT use --quiet (suppresses user interaction)"
+                    assert (
+                        "--quiet" not in cmd
+                    ), "gcloud command should NOT use --quiet (suppresses user interaction)"
 
                     # Check capture_output is False to allow user to see prompts
-                    assert call_args[1].get("capture_output") is False, "capture_output should be False to show gcloud URL/prompts to user"
+                    assert (
+                        call_args[1].get("capture_output") is False
+                    ), "capture_output should be False to show gcloud URL/prompts to user"
 
     def test_force_reauth_non_interactive_uses_no_browser(self, async_sample_config):
         """Force re-auth uses --no-browser (not --quiet) in non-interactive mode.
@@ -555,8 +626,14 @@ class TestGreyCloudAsyncClientAuthError:
                         cmd = call_args[0][0]
 
                         # Should use --no-browser in non-interactive mode
-                        assert "--no-browser" in cmd, "Should use --no-browser in non-interactive mode"
+                        assert (
+                            "--no-browser" in cmd
+                        ), "Should use --no-browser in non-interactive mode"
                         # Should NOT use --quiet
-                        assert "--quiet" not in cmd, "Should NOT use --quiet even in non-interactive mode"
+                        assert (
+                            "--quiet" not in cmd
+                        ), "Should NOT use --quiet even in non-interactive mode"
                         # capture_output should be False
-                        assert call_args[1].get("capture_output") is False, "capture_output should be False"
+                        assert (
+                            call_args[1].get("capture_output") is False
+                        ), "capture_output should be False"

@@ -267,7 +267,9 @@ class TestCreateClient:
                     )
 
                     # Should have attempted re-authentication
-                    assert call_count[0] >= 2, "Should retry after seeing 'expired' error"
+                    assert (
+                        call_count[0] >= 2
+                    ), "Should retry after seeing 'expired' error"
 
     @pytest.mark.auth
     @patch("greycloud.auth.HAS_GOOGLE_AUTH", True)
@@ -289,7 +291,9 @@ class TestCreateClient:
             if call_count[0] == 1:
                 # First call: fail with 'Reauthentication is needed' error
                 error = subprocess.CalledProcessError(
-                    1, "gcloud", stderr=b"Reauthentication is needed. Please run: gcloud auth application-default login"
+                    1,
+                    "gcloud",
+                    stderr=b"Reauthentication is needed. Please run: gcloud auth application-default login",
                 )
                 raise error
             return "new-token"
@@ -313,4 +317,6 @@ class TestCreateClient:
                     )
 
                     # Should have attempted re-authentication
-                    assert call_count[0] >= 2, "Should retry after seeing 'Reauthentication is needed' error"
+                    assert (
+                        call_count[0] >= 2
+                    ), "Should retry after seeing 'Reauthentication is needed' error"

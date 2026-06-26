@@ -332,9 +332,10 @@ class GreyCloudAsyncClient:
         tools: Optional[List[types.Tool]] = None,
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
+        return_chunks: bool = False,
         **kwargs,
-    ) -> AsyncGenerator[str, None]:
-        """Generate content (streaming). Yields text chunks. Rate-limited."""
+    ) -> AsyncGenerator[Union[str, types.GenerateContentResponse], None]:
+        """Generate content (streaming). Yields text chunks or raw response objects. Rate-limited."""
         model_name = model or self.config.model
         config = self._build_generate_config(
             system_instruction=system_instruction,
@@ -356,14 +357,17 @@ class GreyCloudAsyncClient:
 
         stream = await self.rate_limiter.call_with_limits(token_est, _start_stream())
         async for chunk in stream:
-            if (
-                chunk.candidates
-                and chunk.candidates[0].content
-                and chunk.candidates[0].content.parts
-            ):
-                chunk_text = chunk.text
-                if chunk_text:
-                    yield chunk_text
+            if return_chunks:
+                yield chunk
+            else:
+                if (
+                    chunk.candidates
+                    and chunk.candidates[0].content
+                    and chunk.candidates[0].content.parts
+                ):
+                    chunk_text = chunk.text
+                    if chunk_text:
+                        yield chunk_text
 
     async def count_tokens(
         self,
@@ -393,12 +397,21 @@ class GreyCloudAsyncClient:
         streaming: bool = False,
         base_delay: float = 2.0,
         max_delay: float = 60.0,
+        return_chunks: bool = False,
         **generate_kwargs,
-    ) -> Union[types.GenerateContentResponse, AsyncGenerator[str, None]]:
-        """Generate content with exponential backoff retry. If streaming=True, returns an async generator of text chunks."""
+    ) -> Union[
+        types.GenerateContentResponse,
+        AsyncGenerator[Union[str, types.GenerateContentResponse], None],
+    ]:
+        """Generate content with exponential backoff retry. If streaming=True, returns an async generator of text chunks or raw response objects."""
         if streaming:
             return self._generate_with_retry_stream(
-                contents, max_retries, base_delay, max_delay, **generate_kwargs
+                contents,
+                max_retries,
+                base_delay,
+                max_delay,
+                return_chunks=return_chunks,
+                **generate_kwargs,
             )
         model_name = generate_kwargs.get("model") or self.config.model
         config_kwargs = {k: v for k, v in generate_kwargs.items() if k != "model"}
@@ -480,13 +493,14 @@ class GreyCloudAsyncClient:
         max_retries: int,
         base_delay: float,
         max_delay: float,
+        return_chunks: bool = False,
         **generate_kwargs,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[Union[str, types.GenerateContentResponse], None]:
         """Async generator that yields stream chunks with retry on failure."""
         for attempt in range(max_retries + 1):
             try:
                 async for chunk in self.generate_content_stream(
-                    contents, **generate_kwargs
+                    contents, return_chunks=return_chunks, **generate_kwargs
                 ):
                     yield chunk
                 return
