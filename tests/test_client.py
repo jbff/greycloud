@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock
 from google.genai import types
 from greycloud.client import GreyCloudClient
 from greycloud.config import GreyCloudConfig
+from greycloud.grounding import GroundingSource
 
 
 class TestGreyCloudClient:
@@ -220,20 +221,40 @@ class TestGreyCloudClient:
             assert count >= 0
 
     def test_build_tools_with_vertex_search(self, sample_config):
-        """Test tool building with Vertex AI Search"""
-        config = GreyCloudConfig(
-            project_id="test-project",
-            use_vertex_ai_search=True,
-            vertex_ai_search_datastore="projects/test/locations/us/datastores/test-ds",
-        )
+        """Test tool building with Vertex AI Search
+
+        Under the default ``grounding_mode="inject"`` the retrieval tool is
+        dropped (grounding is injected into the prompt instead); it is only
+        included in the legacy ``grounding_mode="tool"`` mode.
+        """
+        datastore = "projects/test/locations/us/datastores/test-ds"
 
         with patch("greycloud.client.create_client") as mock_create:
             mock_create.return_value = MagicMock()
-            client = GreyCloudClient(config)
-            tools = client._build_tools()
 
+            # Default inject mode: retrieval tool dropped even with datastore.
+            client = GreyCloudClient(
+                GreyCloudConfig(
+                    project_id="test-project",
+                    use_vertex_ai_search=True,
+                    vertex_ai_search_datastore=datastore,
+                )
+            )
+            assert client._build_tools() == []
+
+            # Legacy "tool" mode: retrieval tool present.
+            client = GreyCloudClient(
+                GreyCloudConfig(
+                    project_id="test-project",
+                    use_vertex_ai_search=True,
+                    vertex_ai_search_datastore=datastore,
+                    grounding_mode="tool",
+                )
+            )
+            tools = client._build_tools()
             assert len(tools) == 1
             assert tools[0].retrieval is not None
+            assert tools[0].retrieval.vertex_ai_search.datastore == datastore
 
     def test_build_tools_without_vertex_search(self, sample_config):
         """Test tool building without Vertex AI Search"""
@@ -424,3 +445,251 @@ class TestGreyCloudClient:
             assert (
                 mock_genai_client.models.generate_content.call_count == 3
             )  # Initial + 2 retries
+
+
+DATASTORE = "projects/test/locations/us/datastores/test-ds"
+
+
+def _grounding_config(**kwargs):
+    """GreyCloudConfig with vertex-ai-search enabled (inject mode by default)."""
+    defaults = dict(
+        project_id="test-project",
+        use_vertex_ai_search=True,
+        vertex_ai_search_datastore=DATASTORE,
+    )
+    defaults.update(kwargs)
+    return GreyCloudConfig(**defaults)
+
+
+def _two_fake_sources():
+    return [
+        GroundingSource(
+            title="Doc1", link="gs://bucket/doc1.pdf", snippet="Passage one.", index=1
+        ),
+        GroundingSource(
+            title="Doc2", link="gs://bucket/doc2.pdf", snippet="Passage two.", index=2
+        ),
+    ]
+
+
+class TestGreyCloudClientGroundingInjection:
+    """Integration tests for Discovery Engine grounding injection (inject mode)."""
+
+    def test_generate_content_inject_mode_injects_grounding_block(
+        self, sample_config, mock_generate_response
+    ):
+        """Inject mode: search runs on the last user query, sources are prepended
+        to a copy of the last user message, and no retrieval tool is sent."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources",
+                return_value=_two_fake_sources(),
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                contents = [
+                    types.Content(
+                        role="user", parts=[types.Part.from_text(text="Hello")]
+                    )
+                ]
+                client.generate_content(contents)
+
+        # Search is performed with (config, last user query).
+        mock_search.assert_called_once()
+        assert mock_search.call_args[0][0] is client.config
+        assert mock_search.call_args[0][1] == "Hello"
+
+        call_args = mock_genai_client.models.generate_content.call_args
+        sent_contents = call_args[1]["contents"]
+        sent_config = call_args[1]["config"]
+
+        # Retrieval tool absent in inject mode.
+        assert sent_config.tools == []
+
+        # Grounding block prepended to the (copied) last user message.
+        last_user = sent_contents[-1]
+        assert last_user.role == "user"
+        assert last_user.parts[0].text.startswith("<grounding_sources>")
+        assert "[1] (Doc1" in last_user.parts[0].text
+        assert "[2] (Doc2" in last_user.parts[0].text
+        # Original user text still present after the injected block.
+        assert last_user.parts[-1].text == "Hello"
+
+    def test_generate_content_stream_inject_mode_injects_grounding_block(
+        self, sample_config
+    ):
+        """Streaming path applies the same injection as the non-streaming path."""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.candidates[0].content.parts[0].text = "Hello"
+        mock_chunk.text = "Hello"
+
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources",
+                return_value=_two_fake_sources(),
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content_stream.return_value = [
+                    mock_chunk
+                ]
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                contents = [
+                    types.Content(
+                        role="user", parts=[types.Part.from_text(text="Hello")]
+                    )
+                ]
+                chunks = list(client.generate_content_stream(contents))
+
+        assert chunks == ["Hello"]
+        mock_search.assert_called_once()
+        assert mock_search.call_args[0][1] == "Hello"
+
+        call_args = mock_genai_client.models.generate_content_stream.call_args
+        sent_contents = call_args[1]["contents"]
+        sent_config = call_args[1]["config"]
+        assert sent_config.tools == []
+        last_user = sent_contents[-1]
+        assert last_user.parts[0].text.startswith("<grounding_sources>")
+        assert last_user.parts[-1].text == "Hello"
+
+    def test_generate_content_inject_mode_empty_sources_degrades_ungrounded(
+        self, sample_config, mock_generate_response
+    ):
+        """Empty search results degrade to ungrounded generation: still called,
+        contents unmodified, no grounding part, no exception."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=[]
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                contents = [
+                    types.Content(
+                        role="user", parts=[types.Part.from_text(text="Hello")]
+                    )
+                ]
+                response = client.generate_content(contents)
+
+        assert response == mock_generate_response
+        mock_search.assert_called_once()
+
+        call_args = mock_genai_client.models.generate_content.call_args
+        sent_contents = call_args[1]["contents"]
+        # Same list object passed through untouched.
+        assert sent_contents is contents
+        assert len(contents[0].parts) == 1
+        assert contents[0].parts[0].text == "Hello"
+        assert "<grounding_sources>" not in contents[0].parts[0].text
+
+    def test_generate_content_tool_mode_no_search_uses_retrieval_tool(
+        self, sample_config, mock_generate_response
+    ):
+        """Tool mode is unchanged: retrieval tool sent, no search performed,
+        contents unmodified."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch("greycloud.client.search_sources") as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(
+                    _grounding_config(grounding_mode="tool")
+                )
+                contents = [
+                    types.Content(
+                        role="user", parts=[types.Part.from_text(text="Hello")]
+                    )
+                ]
+                client.generate_content(contents)
+
+        mock_search.assert_not_called()
+
+        call_args = mock_genai_client.models.generate_content.call_args
+        sent_config = call_args[1]["config"]
+        assert len(sent_config.tools) == 1
+        assert sent_config.tools[0].retrieval is not None
+        assert (
+            sent_config.tools[0].retrieval.vertex_ai_search.datastore
+            == client.config.vertex_ai_search_datastore
+        )
+        # Contents passed through unmodified.
+        assert call_args[1]["contents"] is contents
+
+    def test_generate_content_inject_mode_does_not_mutate_caller_contents(
+        self, sample_config, mock_generate_response
+    ):
+        """Caller's contents list and Content objects are never mutated."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources",
+                return_value=_two_fake_sources(),
+            ):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                original_user = types.Content(
+                    role="user", parts=[types.Part.from_text(text="Hello")]
+                )
+                contents = [original_user]
+                client.generate_content(contents)
+
+        # Original list, Content object, and parts are untouched.
+        assert len(contents) == 1
+        assert contents[0] is original_user
+        assert len(original_user.parts) == 1
+        assert original_user.parts[0].text == "Hello"
+        assert "<grounding_sources>" not in original_user.parts[0].text
+
+    def test_generate_content_explicit_tools_override_skips_injection(
+        self, sample_config, mock_generate_response
+    ):
+        """An explicit tools= override is honored as-is and skips injection."""
+        explicit_tool = types.Tool(
+            retrieval=types.Retrieval(
+                vertex_ai_search=types.VertexAISearch(datastore=DATASTORE)
+            )
+        )
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch("greycloud.client.search_sources") as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                contents = [
+                    types.Content(
+                        role="user", parts=[types.Part.from_text(text="Hello")]
+                    )
+                ]
+                client.generate_content(contents, tools=[explicit_tool])
+
+        mock_search.assert_not_called()
+
+        call_args = mock_genai_client.models.generate_content.call_args
+        sent_config = call_args[1]["config"]
+        assert sent_config.tools == [explicit_tool]
+        # Contents passed through unmodified.
+        assert call_args[1]["contents"] is contents

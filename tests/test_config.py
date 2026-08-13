@@ -198,6 +198,35 @@ class TestGreyCloudConfig:
                     config = GreyCloudConfig(project_id="test-project")
                     assert config.use_api_key == expected
 
+    def test_config_grounding_mode_default(self):
+        """Default grounding_mode is 'inject' (new behavior, no config change needed)"""
+        import subprocess
+
+        with patch.object(subprocess, "run") as mock_run:
+            mock_run.return_value.returncode = 0
+            config = GreyCloudConfig(project_id="test-project")
+
+            assert config.grounding_mode == "inject"
+
+    def test_config_grounding_mode_tool(self):
+        """grounding_mode='tool' is accepted (legacy escape hatch)"""
+        import subprocess
+
+        with patch.object(subprocess, "run") as mock_run:
+            mock_run.return_value.returncode = 0
+            config = GreyCloudConfig(project_id="test-project", grounding_mode="tool")
+
+            assert config.grounding_mode == "tool"
+
+    def test_config_grounding_mode_invalid_raises(self):
+        """An invalid grounding_mode value raises ValueError"""
+        import subprocess
+
+        with patch.object(subprocess, "run") as mock_run:
+            mock_run.return_value.returncode = 0
+            with pytest.raises(ValueError, match="grounding_mode"):
+                GreyCloudConfig(project_id="test-project", grounding_mode="bogus")
+
     def test_config_vertex_ai_search(self):
         """Test Vertex AI Search configuration"""
         import subprocess
