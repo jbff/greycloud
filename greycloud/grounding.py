@@ -232,8 +232,15 @@ def _search_payload(query: str, page_size: int) -> dict:
     }
 
 
-def _validate_args(config: GreyCloudConfig, query: str) -> Optional[str]:
-    """Return an error message when the search cannot run, else None."""
+def _validate_args(
+    config: GreyCloudConfig, query: str, page_size: int
+) -> Optional[str]:
+    """Return an error message when the search cannot run, else None.
+
+    Also rejects wrong-typed arguments (non-string datastore/query, non-int
+    page_size) so no argument-value class can raise out of the search
+    functions and break the never-raise contract.
+    """
     if not query or not str(query).strip():
         return "empty query; skipping Discovery Engine search"
     if not isinstance(query, str):
@@ -244,6 +251,13 @@ def _validate_args(config: GreyCloudConfig, query: str) -> Optional[str]:
             "GreyCloudConfig.vertex_ai_search_datastore is not set; "
             "skipping Discovery Engine search"
         )
+    if not isinstance(datastore, str):
+        return (
+            "GreyCloudConfig.vertex_ai_search_datastore must be a string; "
+            "skipping Discovery Engine search"
+        )
+    if not isinstance(page_size, int):
+        return "page_size must be an integer; skipping Discovery Engine search"
     return None
 
 
@@ -269,22 +283,23 @@ def search_sources(
     Returns:
         List of up to ``page_size`` GroundingSources, ordered by relevance.
     """
-    invalid = _validate_args(config, query)
+    invalid = _validate_args(config, query, page_size)
     if invalid:
         logger.warning("search_sources: %s", invalid)
         return []
 
-    url = _search_url(getattr(config, "vertex_ai_search_datastore"))
     headers, auth_error = _build_headers(config)
     if auth_error:
         logger.warning("search_sources: %s", auth_error)
         return []
 
-    payload = _search_payload(query, page_size)
+    datastore = getattr(config, "vertex_ai_search_datastore")
     last_exc: Optional[BaseException] = None
 
     for attempt in range(_MAX_ATTEMPTS):
         try:
+            url = _search_url(datastore)
+            payload = _search_payload(query, page_size)
             response = requests.post(url, json=payload, headers=headers, timeout=timeout)
             if response.status_code >= 500:
                 last_exc = RuntimeError(
@@ -295,7 +310,8 @@ def search_sources(
                     attempt + 1,
                     response.status_code,
                 )
-                time.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
+                if attempt < _MAX_ATTEMPTS - 1:
+                    time.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
                 continue
             if response.status_code < 200 or response.status_code >= 300:
                 logger.warning(
@@ -304,7 +320,18 @@ def search_sources(
                     response.text[:300],
                 )
                 return []
-            return _shape_results(response.json(), max_chars)
+            try:
+                data = response.json()
+            except ValueError as e:
+                # Server-data problem (unparseable body), not transient: do not retry.
+                logger.warning(
+                    "search_sources: invalid JSON in Discovery Engine response "
+                    "(HTTP %s): %s",
+                    response.status_code,
+                    e,
+                )
+                return []
+            return _shape_results(data, max_chars)
         except Exception as e:  # noqa: BLE001 - must never raise to the caller
             last_exc = e
             logger.warning(
@@ -312,7 +339,8 @@ def search_sources(
                 attempt + 1,
                 e,
             )
-            time.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
+            if attempt < _MAX_ATTEMPTS - 1:
+                time.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
 
     logger.warning(
         "search_sources: Discovery Engine search failed after %d attempts: %s",
@@ -334,22 +362,23 @@ async def asearch_sources(
     Same contract as :func:`search_sources`: never raises, returns ``[]`` on
     any failure so the caller can generate without context.
     """
-    invalid = _validate_args(config, query)
+    invalid = _validate_args(config, query, page_size)
     if invalid:
         logger.warning("asearch_sources: %s", invalid)
         return []
 
-    url = _search_url(getattr(config, "vertex_ai_search_datastore"))
     headers, auth_error = _build_headers(config)
     if auth_error:
         logger.warning("asearch_sources: %s", auth_error)
         return []
 
-    payload = _search_payload(query, page_size)
+    datastore = getattr(config, "vertex_ai_search_datastore")
     last_exc: Optional[BaseException] = None
 
     for attempt in range(_MAX_ATTEMPTS):
         try:
+            url = _search_url(datastore)
+            payload = _search_payload(query, page_size)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, json=payload, headers=headers)
             if response.status_code >= 500:
@@ -361,7 +390,8 @@ async def asearch_sources(
                     attempt + 1,
                     response.status_code,
                 )
-                await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
+                if attempt < _MAX_ATTEMPTS - 1:
+                    await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
                 continue
             if response.status_code < 200 or response.status_code >= 300:
                 logger.warning(
@@ -370,7 +400,18 @@ async def asearch_sources(
                     response.text[:300],
                 )
                 return []
-            return _shape_results(response.json(), max_chars)
+            try:
+                data = response.json()
+            except ValueError as e:
+                # Server-data problem (unparseable body), not transient: do not retry.
+                logger.warning(
+                    "asearch_sources: invalid JSON in Discovery Engine response "
+                    "(HTTP %s): %s",
+                    response.status_code,
+                    e,
+                )
+                return []
+            return _shape_results(data, max_chars)
         except Exception as e:  # noqa: BLE001 - must never raise to the caller
             last_exc = e
             logger.warning(
@@ -378,7 +419,8 @@ async def asearch_sources(
                 attempt + 1,
                 e,
             )
-            await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
+            if attempt < _MAX_ATTEMPTS - 1:
+                await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
 
     logger.warning(
         "asearch_sources: Discovery Engine search failed after %d attempts: %s",
