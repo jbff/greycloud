@@ -20,36 +20,17 @@ from google import genai
 from google.genai import types
 
 
-def create_client(
+def get_credentials(
     project_id: str,
-    location: str,
     sa_email: Optional[str] = None,
     use_api_key: bool = False,
     api_key_file: str = "GOOGLE_CLOUD_API_KEY",
-    endpoint: str = "https://aiplatform.googleapis.com",
-    api_version: str = "v1",
     auto_reauth: bool = True,
-) -> genai.Client:
-    """
-    Create and return a genai.Client with appropriate authentication
-
-    Args:
-        project_id: GCP project ID
-        location: GCP location/region
-        sa_email: Service account email for impersonation (optional)
-        use_api_key: If True, use API key authentication instead of OAuth
-        api_key_file: Path to API key file if using API key auth
-        endpoint: API endpoint base URL
-        api_version: API version
-        auto_reauth: If True, automatically attempt re-authentication on failure
-
-    Returns:
-        Authenticated genai.Client instance
-
-    Raises:
-        FileNotFoundError: If API key file not found when use_api_key=True
-        ImportError: If google-auth not available and not using API key
-        RuntimeError: If authentication fails
+):
+    """Resolve Google credentials using the existing chain:
+    ADC -> SA impersonation -> gcloud token -> auto-login.
+    Returns an API key string when use_api_key=True, else a google-auth
+    Credentials object (same objects create_client uses today).
     """
     if use_api_key:
         try:
@@ -62,16 +43,7 @@ def create_client(
         except Exception as e:
             raise Exception(f"Error reading API key file '{api_key_file}': {str(e)}")
 
-        return genai.Client(
-            vertexai=True,
-            api_key=api_key,
-            project=project_id,
-            location=location,
-            http_options=types.HttpOptions(
-                base_url=endpoint,
-                api_version=api_version,
-            ),
-        )
+        return api_key
     else:
         # Preferred path: use Google Auth + service account impersonation (if sa_email provided)
         # This requires your user to have roles/iam.serviceAccountTokenCreator on the service account.
@@ -241,6 +213,68 @@ def create_client(
                     pass
 
             credentials = _StaticTokenCredentials(token)
+
+        return credentials
+
+
+def create_client(
+    project_id: str,
+    location: str,
+    sa_email: Optional[str] = None,
+    use_api_key: bool = False,
+    api_key_file: str = "GOOGLE_CLOUD_API_KEY",
+    endpoint: str = "https://aiplatform.googleapis.com",
+    api_version: str = "v1",
+    auto_reauth: bool = True,
+) -> genai.Client:
+    """
+    Create and return a genai.Client with appropriate authentication
+
+    Args:
+        project_id: GCP project ID
+        location: GCP location/region
+        sa_email: Service account email for impersonation (optional)
+        use_api_key: If True, use API key authentication instead of OAuth
+        api_key_file: Path to API key file if using API key auth
+        endpoint: API endpoint base URL
+        api_version: API version
+        auto_reauth: If True, automatically attempt re-authentication on failure
+
+    Returns:
+        Authenticated genai.Client instance
+
+    Raises:
+        FileNotFoundError: If API key file not found when use_api_key=True
+        ImportError: If google-auth not available and not using API key
+        RuntimeError: If authentication fails
+    """
+    if use_api_key:
+        api_key = get_credentials(
+            project_id=project_id,
+            sa_email=sa_email,
+            use_api_key=True,
+            api_key_file=api_key_file,
+            auto_reauth=auto_reauth,
+        )
+
+        return genai.Client(
+            vertexai=True,
+            api_key=api_key,
+            project=project_id,
+            location=location,
+            http_options=types.HttpOptions(
+                base_url=endpoint,
+                api_version=api_version,
+            ),
+        )
+    else:
+        credentials = get_credentials(
+            project_id=project_id,
+            sa_email=sa_email,
+            use_api_key=False,
+            api_key_file=api_key_file,
+            auto_reauth=auto_reauth,
+        )
 
         return genai.Client(
             vertexai=True,
