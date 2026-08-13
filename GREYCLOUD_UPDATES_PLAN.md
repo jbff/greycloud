@@ -1,5 +1,12 @@
 # GreyCloud updates plan (for greycloud repo)
 
+> **Note (2026-08-13):** Superseded in part by the explicit-grounding feature
+> (see `GREYCLOUD_GROUNDING_DIAGNOSIS.md`). With the default
+> `grounding_mode="inject"`, `_build_tools()` no longer adds the
+> `types.Tool(retrieval=...)` for `use_vertex_ai_search=True` callers — the
+> retrieval tool is only added in `grounding_mode="tool"`. The rest of this
+> async/sync-parity plan stands.
+
 This document describes changes to make in the **greycloud** package (e.g. in `../greycloud` or the canonical greycloud repo) so that the async rate-limited client is a true mirror of the sync client. Consumers (e.g. BlackSheep) can then switch between sync and async interfaces with analogous classes and calls.
 
 ---

@@ -77,7 +77,9 @@ pytest --durations=10
 - `test_config.py` - Tests for `GreyCloudConfig` class
 - `test_auth.py` - Tests for authentication module
 - `test_client.py` - Tests for `GreyCloudClient` class
+- `test_async_client.py` - Tests for `GreyCloudAsyncClient` class
 - `test_batch.py` - Tests for `GreyCloudBatch` class
+- `test_grounding.py` - Tests for the Discovery Engine grounding module (endpoint selection, search request shape, snippet extraction, `build_grounding_context`, degrade-to-`[]` contract, credential refresh, 429 retry)
 - `test_init.py` - Tests for package initialization
 
 ### What Passing Tests Mean

@@ -42,6 +42,7 @@ Created comprehensive unit tests covering all modules:
   - Safety settings
   - Batch configuration
   - Vertex AI Search configuration
+  - Grounding mode validation (`grounding_mode` must be `"inject"` or `"tool"`)
 
 - **`tests/test_auth.py`**: 10+ tests for authentication module
   - API key authentication
@@ -67,6 +68,14 @@ Created comprehensive unit tests covering all modules:
   - Batch job monitoring
   - Result downloading
   - Error handling
+
+- **`tests/test_grounding.py`**: 48 tests for the Discovery Engine grounding module (`greycloud/grounding.py`)
+  - Regional endpoint selection (`global` / `us` / `eu`, unknown → global)
+  - Search request URL/body shape (mocked transports — no live GCP)
+  - `GroundingSource` extraction and snippet HTML stripping
+  - `build_grounding_context` rendering and `max_chars` cap
+  - Degrade contract: search failure → `[]` (never raises), sync + async
+  - Credential refresh-on-demand and HTTP 429 retry
 
 - **`tests/test_init.py`**: Package initialization tests
   - Version verification

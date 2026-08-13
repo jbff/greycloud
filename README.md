@@ -54,7 +54,7 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
     - Generation parameters (temperature, top_p, max_output_tokens, seed)
     - Safety settings
     - Thinking configuration
-    - Vertex AI Search datastore
+    - Vertex AI Search datastore + grounding mode (`"inject"` | `"tool"`)
     - Batch/GCS bucket settings
 
 - **Resilient generation**
@@ -64,11 +64,13 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
     - Attempts re-authentication when appropriate (for OAuth-based flows)
     - Re-creates the underlying `genai.Client` as needed
 
-- **Tools & Search wiring**
+- **Vertex AI Search grounding**
   - Vertex AI Search is turned on with:
     - `use_vertex_ai_search=True`
     - `vertex_ai_search_datastore="projects/.../dataStores/..."`.
-  - GreyCloud constructs the appropriate `types.Tool` and wires it into calls.
+  - Grounding mode (`grounding_mode`, default `"inject"`):
+    - `"inject"` (default): GreyCloud runs the Discovery Engine search itself with your existing credentials and injects the top results as an attributed `<grounding_sources>` block into the prompt. This works with **every** model version — the server-side `tools.retrieval` grounding silently returns zero chunks on Gemini 3.x (see §5.8).
+    - `"tool"`: legacy behavior — GreyCloud constructs the `types.Tool(retrieval=...)` and wires it into calls (for model versions where it still works, e.g. gemini-2.5).
 
 - **Batch utilities**
   - `GreyCloudBatch` wraps the more verbose raw batch APIs:
