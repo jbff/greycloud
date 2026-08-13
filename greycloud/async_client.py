@@ -6,6 +6,7 @@ to enforce RPM, TPM, and concurrency limits.
 """
 
 import asyncio
+import logging
 import random
 import time
 import subprocess
@@ -19,6 +20,9 @@ from google.genai import types
 from .config import GreyCloudConfig
 from .auth import create_client
 from .rate_limiter import VertexRateLimiter
+from .grounding import asearch_sources, build_grounding_context
+
+logger = logging.getLogger(__name__)
 
 
 class GreyCloudAsyncClient:
@@ -197,9 +201,20 @@ class GreyCloudAsyncClient:
         return max(total_chars // 4, 1)
 
     def _build_tools(self) -> List[types.Tool]:
-        """Build tools list based on configuration."""
+        """Build tools list based on configuration.
+
+        The ``tools.retrieval.vertexAiSearch`` tool is only included in
+        ``grounding_mode == "tool"`` (the legacy escape hatch). In the default
+        ``"inject"`` mode the retrieval tool is dropped: grounding is performed
+        by an explicit Discovery Engine search whose results are injected into
+        the prompt (see ``_apply_grounding_async``).
+        """
         tools = []
-        if self.config.use_vertex_ai_search and self.config.vertex_ai_search_datastore:
+        if (
+            self.config.use_vertex_ai_search
+            and self.config.vertex_ai_search_datastore
+            and self.config.grounding_mode == "tool"
+        ):
             tools.append(
                 types.Tool(
                     retrieval=types.Retrieval(
@@ -210,6 +225,80 @@ class GreyCloudAsyncClient:
                 )
             )
         return tools
+
+    @staticmethod
+    def _last_user_query(
+        contents: List[types.Content],
+    ):
+        """Return (index, query) of the last user message, or (None, "").
+
+        The query is the concatenated text of the last ``role == "user"``
+        Content in the list. Returns ``(None, "")`` when there is no user
+        content, in which case grounding must be skipped.
+        """
+        for i in range(len(contents) - 1, -1, -1):
+            content = contents[i]
+            if str(getattr(content, "role", None) or "").lower() == "user":
+                parts = getattr(content, "parts", None) or []
+                text = "".join(
+                    part.text for part in parts if getattr(part, "text", None)
+                )
+                return i, text.strip()
+        return None, ""
+
+    async def _apply_grounding_async(
+        self,
+        contents: List[types.Content],
+        tools: Optional[List[types.Tool]] = None,
+    ) -> List[types.Content]:
+        """Return the contents to send, injecting Discovery Engine grounding.
+
+        Only active when the config enables vertex-ai-search grounding in
+        ``"inject"`` mode and the caller did not pass an explicit ``tools``
+        override. Runs the search BEFORE ``GenerateContentConfig`` is built, so
+        the injected text is part of ``contents`` for both the API call and
+        ``_estimate_prompt_tokens``.
+
+        The caller's ``contents`` list and Content objects are never mutated:
+        on injection a shallow-copied list with a copied last user message
+        (grounding block prepended as a text part) is returned. A failed or
+        empty search degrades to ungrounded generation (``asearch_sources``
+        logs a WARNING on failure and never raises).
+        """
+        if tools is not None:
+            # Explicit tools override: honor it as today, no injection.
+            return contents
+        if not (
+            self.config.use_vertex_ai_search
+            and self.config.grounding_mode == "inject"
+            and self.config.vertex_ai_search_datastore
+        ):
+            return contents
+
+        last_user_index, query = self._last_user_query(contents)
+        if last_user_index is None or not query:
+            # No user content (or empty user text): nothing to search on.
+            return contents
+
+        sources = await asearch_sources(self.config, query)
+        if not sources:
+            # Search failures are logged at WARNING inside asearch_sources; an
+            # empty result set is the genuine "no matches" case.
+            logger.info(
+                "grounding_mode=inject, search returned no sources; "
+                "proceeding ungrounded"
+            )
+            return contents
+
+        block = build_grounding_context(sources)
+        logger.info("grounding_mode=inject, injected %d source(s)", len(sources))
+        new_contents = list(contents)
+        original_parts = list(new_contents[last_user_index].parts or [])
+        new_contents[last_user_index] = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=block)] + original_parts,
+        )
+        return new_contents
 
     def _build_generate_config(
         self,
@@ -301,6 +390,7 @@ class GreyCloudAsyncClient:
     ) -> types.GenerateContentResponse:
         """Generate content with rate limiting."""
         model_name = model or self.config.model
+        contents = await self._apply_grounding_async(contents, tools)
         config = self._build_generate_config(
             system_instruction=system_instruction,
             temperature=temperature,
@@ -312,6 +402,7 @@ class GreyCloudAsyncClient:
             cached_content=cached_content,
             **kwargs,
         )
+        # Token estimate accounts for any injected grounding block.
         token_est = self._estimate_prompt_tokens(contents)
         return await self.rate_limiter.call_with_limits(
             token_est,
@@ -337,6 +428,9 @@ class GreyCloudAsyncClient:
     ) -> AsyncGenerator[Union[str, types.GenerateContentResponse], None]:
         """Generate content (streaming). Yields text chunks or raw response objects. Rate-limited."""
         model_name = model or self.config.model
+        # Async generator: the grounding search + injection run when the
+        # generator is first advanced, before the first yield.
+        contents = await self._apply_grounding_async(contents, tools)
         config = self._build_generate_config(
             system_instruction=system_instruction,
             temperature=temperature,
@@ -348,6 +442,7 @@ class GreyCloudAsyncClient:
             cached_content=cached_content,
             **kwargs,
         )
+        # Token estimate accounts for any injected grounding block.
         token_est = self._estimate_prompt_tokens(contents)
 
         async def _start_stream():
@@ -413,19 +508,13 @@ class GreyCloudAsyncClient:
                 return_chunks=return_chunks,
                 **generate_kwargs,
             )
-        model_name = generate_kwargs.get("model") or self.config.model
-        config_kwargs = {k: v for k, v in generate_kwargs.items() if k != "model"}
-        config = self._build_generate_config(**config_kwargs)
-        token_est = self._estimate_prompt_tokens(contents)
-
+        # Route through generate_content (mirroring the sync client) so every
+        # entry point inherits grounding injection consistently. The Discovery
+        # Engine search simply re-runs on a retry attempt, which is acceptable
+        # (retries are rare and a search is cheap).
         for attempt in range(max_retries + 1):
             try:
-                return await self.rate_limiter.call_with_limits(
-                    token_est,
-                    self._client.aio.models.generate_content(
-                        model=model_name, contents=contents, config=config
-                    ),
-                )
+                return await self.generate_content(contents, **generate_kwargs)
             except Exception as e:
                 is_auth_error = self._is_authentication_error(e)
 

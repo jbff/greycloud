@@ -64,6 +64,9 @@ class GreyCloudConfig:
         default_factory=lambda: os.environ.get("VERTEX_AI_SEARCH_DATASTORE", None)
     )
     use_vertex_ai_search: bool = False
+    # Grounding: "inject" (default) runs the Discovery Engine search in GreyCloud and
+    # injects results into the prompt. "tool" keeps the legacy tools.retrieval.
+    grounding_mode: str = "inject"  # "inject" | "tool"
 
     # Thinking config
     # When None, no thinking config is sent. Set to "LOW", "MEDIUM", or "HIGH"
@@ -109,3 +112,6 @@ class GreyCloudConfig:
                 "Example: export PROJECT_ID=your-project-id\n"
                 "Or run: gcloud config set project your-project-id"
             )
+
+        if self.grounding_mode not in ("inject", "tool"):
+            raise ValueError("grounding_mode must be 'inject' or 'tool'")

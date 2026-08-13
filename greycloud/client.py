@@ -2,6 +2,7 @@
 Main GreyCloud client for content generation and interaction
 """
 
+import logging
 import time
 import random
 from typing import List, Optional, Generator, Dict, Any, Union
@@ -10,6 +11,9 @@ from google.genai import types
 
 from .config import GreyCloudConfig
 from .auth import create_client
+from .grounding import build_grounding_context, search_sources
+
+logger = logging.getLogger(__name__)
 
 
 class GreyCloudClient:
@@ -194,10 +198,21 @@ class GreyCloudClient:
         return self._client
 
     def _build_tools(self) -> List[types.Tool]:
-        """Build tools list based on configuration"""
+        """Build tools list based on configuration.
+
+        The ``tools.retrieval.vertexAiSearch`` tool is only included in
+        ``grounding_mode == "tool"`` (the legacy escape hatch). In the default
+        ``"inject"`` mode the retrieval tool is dropped: grounding is performed
+        by an explicit Discovery Engine search whose results are injected into
+        the prompt (see ``_apply_grounding``).
+        """
         tools = []
 
-        if self.config.use_vertex_ai_search and self.config.vertex_ai_search_datastore:
+        if (
+            self.config.use_vertex_ai_search
+            and self.config.vertex_ai_search_datastore
+            and self.config.grounding_mode == "tool"
+        ):
             tools.append(
                 types.Tool(
                     retrieval=types.Retrieval(
@@ -209,6 +224,80 @@ class GreyCloudClient:
             )
 
         return tools
+
+    @staticmethod
+    def _last_user_query(
+        contents: List[types.Content],
+    ):
+        """Return (index, query) of the last user message, or (None, "").
+
+        The query is the concatenated text of the last ``role == "user"``
+        Content in the list. Returns ``(None, "")`` when there is no user
+        content, in which case grounding must be skipped.
+        """
+        for i in range(len(contents) - 1, -1, -1):
+            content = contents[i]
+            if str(getattr(content, "role", None) or "").lower() == "user":
+                parts = getattr(content, "parts", None) or []
+                text = "".join(
+                    part.text for part in parts if getattr(part, "text", None)
+                )
+                return i, text.strip()
+        return None, ""
+
+    def _apply_grounding(
+        self,
+        contents: List[types.Content],
+        tools: Optional[List[types.Tool]] = None,
+    ) -> List[types.Content]:
+        """Return the contents to send, injecting Discovery Engine grounding.
+
+        Only active when the config enables vertex-ai-search grounding in
+        ``"inject"`` mode and the caller did not pass an explicit ``tools``
+        override. Runs the search BEFORE ``GenerateContentConfig`` is built, so
+        the injected text is part of ``contents`` for both the API call and any
+        downstream token estimation.
+
+        The caller's ``contents`` list and Content objects are never mutated:
+        on injection a shallow-copied list with a copied last user message
+        (grounding block prepended as a text part) is returned. A failed or
+        empty search degrades to ungrounded generation (``search_sources`` logs
+        a WARNING on failure and never raises).
+        """
+        if tools is not None:
+            # Explicit tools override: honor it as today, no injection.
+            return contents
+        if not (
+            self.config.use_vertex_ai_search
+            and self.config.grounding_mode == "inject"
+            and self.config.vertex_ai_search_datastore
+        ):
+            return contents
+
+        last_user_index, query = self._last_user_query(contents)
+        if last_user_index is None or not query:
+            # No user content (or empty user text): nothing to search on.
+            return contents
+
+        sources = search_sources(self.config, query)
+        if not sources:
+            # Search failures are logged at WARNING inside search_sources; an
+            # empty result set is the genuine "no matches" case.
+            logger.info(
+                "grounding_mode=inject, search returned no sources; "
+                "proceeding ungrounded"
+            )
+            return contents
+
+        block = build_grounding_context(sources)
+        logger.info("grounding_mode=inject, injected %d source(s)", len(sources))
+        new_contents = list(contents)
+        original_parts = list(new_contents[last_user_index].parts or [])
+        new_contents[last_user_index] = types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=block)] + original_parts,
+        )
+        return new_contents
 
     def _build_generate_config(
         self,
@@ -336,6 +425,7 @@ class GreyCloudClient:
             GenerateContentResponse
         """
         model_name = model or self.config.model
+        contents = self._apply_grounding(contents, tools)
         config = self._build_generate_config(
             system_instruction=system_instruction,
             temperature=temperature,
@@ -388,6 +478,9 @@ class GreyCloudClient:
             Union[str, types.GenerateContentResponse]: Chunks of response text or raw response objects
         """
         model_name = model or self.config.model
+        # Generator: the grounding search + injection run when the generator is
+        # first advanced, before the first yield.
+        contents = self._apply_grounding(contents, tools)
         config = self._build_generate_config(
             system_instruction=system_instruction,
             temperature=temperature,
