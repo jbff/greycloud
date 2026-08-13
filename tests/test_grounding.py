@@ -170,7 +170,8 @@ class TestSearchSources:
     def test_http_5xx_returns_empty(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch("greycloud.grounding.requests.post", return_value=FakeResponse(503, {}, "err")):
-                assert search_sources(grounding_config, "q") == []
+                with patch("greycloud.grounding.time.sleep"):
+                    assert search_sources(grounding_config, "q") == []
 
     def test_non_2xx_returns_empty(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
@@ -182,7 +183,8 @@ class TestSearchSources:
 
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch("greycloud.grounding.requests.post", side_effect=requests.ConnectionError("down")):
-                assert search_sources(grounding_config, "q") == []
+                with patch("greycloud.grounding.time.sleep"):
+                    assert search_sources(grounding_config, "q") == []
 
     def test_malformed_json_returns_empty_without_retry(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
@@ -213,6 +215,41 @@ class TestSearchSources:
                     sources = search_sources(grounding_config, "q")
         assert len(sources) == 1
         assert mock_post.call_count == 2
+
+    def test_429_retries_then_empty(self, grounding_config):
+        # 429 is the classic transient Discovery Engine throttle: retried like 5xx.
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(429, {}, "throttled")) as mock_post:
+                with patch("greycloud.grounding.time.sleep"):
+                    assert search_sources(grounding_config, "q") == []
+                assert mock_post.call_count == _MAX_ATTEMPTS
+
+    def test_429_recovers_on_second_attempt(self, grounding_config):
+        responses = [FakeResponse(429, {}, "throttled"), FakeResponse(200, OK_PAYLOAD)]
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch("greycloud.grounding.requests.post", side_effect=responses) as mock_post:
+                with patch("greycloud.grounding.time.sleep"):
+                    sources = search_sources(grounding_config, "q")
+        assert len(sources) == 1
+        assert mock_post.call_count == 2
+
+    def test_snippets_as_dict_treated_as_no_snippet(self, grounding_config):
+        # Malformed-shape response: ``snippets`` is a dict, not a list. Should
+        # yield an empty snippet (not raise, not burn a retry attempt).
+        payload = {
+            "results": [
+                {"document": {"derivedStructData": {
+                    "title": "T", "link": "L", "snippets": {"snippet": "not a list"}}}}
+            ]
+        }
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, payload)) as mock_post:
+                sources = search_sources(grounding_config, "q")
+        assert len(sources) == 1
+        assert sources[0].title == "T"
+        assert sources[0].link == "L"
+        assert sources[0].snippet == ""
+        assert mock_post.call_count == 1  # no retries on malformed shape
 
     def test_invalid_query_returns_empty_without_request(self, grounding_config):
         with patch("greycloud.grounding.requests.post") as mock_post:
@@ -250,6 +287,57 @@ class TestSearchSources:
             with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)) as mock_post:
                 search_sources(grounding_config, "q")
         assert mock_post.call_args[1]["headers"] == {"x-goog-api-key": "key-abc"}
+
+
+class TestCredentialRefresh:
+    """_build_headers must refresh only when the token is missing/expired.
+
+    google.auth.default() returns a module-cached credentials object, and each
+    impersonated-credential refresh costs one IAM call; refreshing a still-valid
+    token on every search would burn a metadata-server hit / refresh-token grant
+    per turn.
+    """
+
+    class FakeCreds:
+        def __init__(self, token="valid", expired=False):
+            self.token = token
+            self.expired = expired
+            self.refresh_calls = []
+
+        def refresh(self, request):
+            self.refresh_calls.append(request)
+
+    def test_no_refresh_when_token_valid(self, grounding_config):
+        creds = self.FakeCreds(token="valid", expired=False)
+        with patch("greycloud.grounding.get_credentials", return_value=creds):
+            with patch("google.auth.transport.requests.Request") as mock_request:
+                with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)):
+                    sources = search_sources(grounding_config, "q")
+
+        assert len(sources) == 1
+        assert creds.refresh_calls == []
+        mock_request.assert_not_called()
+
+    def test_refresh_when_expired(self, grounding_config):
+        creds = self.FakeCreds(token="stale", expired=True)
+        with patch("greycloud.grounding.get_credentials", return_value=creds):
+            with patch("google.auth.transport.requests.Request") as mock_request:
+                with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)):
+                    sources = search_sources(grounding_config, "q")
+
+        assert len(sources) == 1
+        assert len(creds.refresh_calls) == 1
+        assert creds.refresh_calls[0] is mock_request.return_value
+
+    def test_refresh_when_token_missing(self, grounding_config):
+        creds = self.FakeCreds(token=None, expired=True)
+        with patch("greycloud.grounding.get_credentials", return_value=creds):
+            with patch("google.auth.transport.requests.Request"):
+                with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)):
+                    sources = search_sources(grounding_config, "q")
+
+        assert len(sources) == 1
+        assert len(creds.refresh_calls) == 1
 
 
 class TestBuildGroundingContext:
@@ -319,6 +407,14 @@ class TestASearchSources:
     async def test_5xx_returns_empty(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch_async_client(FakeResponse(503, {}, "err")) as factory:
+                with patch("greycloud.grounding.asyncio.sleep"):
+                    assert await asearch_sources(grounding_config, "q") == []
+        assert factory.return_value.__aenter__.return_value.post.call_count == _MAX_ATTEMPTS
+
+    @pytest.mark.asyncio
+    async def test_429_returns_empty(self, grounding_config):
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch_async_client(FakeResponse(429, {}, "throttled")) as factory:
                 with patch("greycloud.grounding.asyncio.sleep"):
                     assert await asearch_sources(grounding_config, "q") == []
         assert factory.return_value.__aenter__.return_value.post.call_count == _MAX_ATTEMPTS

@@ -413,6 +413,8 @@ response = client.generate_content(contents)
 print(response.text)
 ```
 
+With `use_vertex_ai_search=True`, the default `grounding_mode="inject"` runs a GreyCloud-side Discovery Engine search and injects the top results as a `<grounding_sources>` block into the prompt (the legacy `tools.retrieval` tool is dropped). Set `grounding_mode="tool"` to keep the legacy `tools.retrieval` behavior instead. The active path is logged at INFO level per request — enable INFO logging to see whether `grounding_mode=inject` or `tool` is in use.
+
 ### 5.9 Batch Processing with GCS
 
 Batch jobs use a GCS bucket for request input and result output. Set `batch_gcs_bucket` (and optionally `gcs_bucket` for general uploads). The batch API expects JSONL input following the Vertex AI REST `GenerateContentRequest` schema: one line per request, each line a JSON object with a `request` key containing `model`, `contents`, and optional `generationConfig`, `systemInstruction`, and `safetySettings` (all camelCase). Note: `InlinedRequest.metadata` is **not** forwarded to batch JSONL because Vertex rejects numeric string values in proto label fields — use prompt-embedded ID tags (e.g. `[SLICE_ID:...]`) for request matching. Results are written by Vertex to `predictions.jsonl` under the job's destination prefix; `download_batch_results` finds and downloads that file.

@@ -40,7 +40,8 @@ _ENDPOINTS = {
 _GLOBAL_ENDPOINT = _ENDPOINTS["global"]
 
 # Retry policy: up to _MAX_ATTEMPTS total attempts (i.e. 2 retries) with a
-# short exponential backoff on transport errors and 5xx responses.
+# short exponential backoff on transport errors, HTTP 429 (Discovery Engine
+# throttling), and 5xx responses.
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 0.5
 
@@ -153,8 +154,11 @@ def _shape_results(data: dict, max_chars: int) -> List[GroundingSource]:
         link = dsd.get("link") or ""
 
         raw_snippet = ""
+        # Malformed-shape responses may carry a non-list ``snippets`` (e.g. a
+        # dict); treat that as "no snippet" instead of raising inside the
+        # enclosing try (which would burn retry attempts on a shape we can't fix).
         snippets = dsd.get("snippets") or []
-        if snippets:
+        if isinstance(snippets, list) and snippets:
             first = snippets[0]
             if isinstance(first, dict):
                 raw_snippet = first.get("snippet", "")
@@ -203,11 +207,16 @@ def _build_headers(config: GreyCloudConfig) -> Tuple[Optional[dict], Optional[st
         return {"x-goog-api-key": creds}, None
 
     try:
-        # Refresh ensures a valid access token for real ADC/impersonated
-        # credentials; _StaticTokenCredentials.refresh() is a no-op.
+        # Refresh only when needed: google.auth.default() returns a module-cached
+        # credentials object, and each refresh of impersonated credentials mints
+        # a fresh token (one IAM call), so refreshing a still-valid token on
+        # every search wastes a metadata-server hit / refresh-token grant.
+        # _StaticTokenCredentials sets ``token`` and ``expired=False``, so this
+        # guard is a no-op there.
         from google.auth.transport.requests import Request
 
-        creds.refresh(Request())
+        if creds.token is None or getattr(creds, "expired", True):
+            creds.refresh(Request())
         token = creds.token
     except Exception as e:  # noqa: BLE001 - must never raise to the caller
         return None, f"failed to obtain access token: {e}"
@@ -301,7 +310,7 @@ def search_sources(
             url = _search_url(datastore)
             payload = _search_payload(query, page_size)
             response = requests.post(url, json=payload, headers=headers, timeout=timeout)
-            if response.status_code >= 500:
+            if response.status_code >= 500 or response.status_code == 429:
                 last_exc = RuntimeError(
                     f"Discovery Engine search returned HTTP {response.status_code}"
                 )
@@ -381,7 +390,7 @@ async def asearch_sources(
             payload = _search_payload(query, page_size)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, json=payload, headers=headers)
-            if response.status_code >= 500:
+            if response.status_code >= 500 or response.status_code == 429:
                 last_exc = RuntimeError(
                     f"Discovery Engine search returned HTTP {response.status_code}"
                 )
