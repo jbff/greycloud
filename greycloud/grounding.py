@@ -241,6 +241,30 @@ def _search_payload(query: str, page_size: int) -> dict:
     }
 
 
+def _normalize_query(query: str) -> str:
+    """Make a user query safe for Discovery Engine keyword search.
+
+    Discovery Engine treats double-quoted phrases as exact contiguous verbatim
+    matches. A quoted long title exists in document *metadata*, not as
+    contiguous body text, so the exact-phrase requirement can never be
+    satisfied and keyword AND-semantics collapse the whole query to 0 results
+    (diagnosis section 1.5). Strip ``"`` characters so every token participates
+    as an ordinary keyword, and trim / collapse internal whitespace.
+
+    Single quotes and apostrophes are left untouched.
+
+    Never raises: on any anomaly the original query is returned unchanged, so
+    the never-raise/degrade-to-ungrounded contract of the search functions is
+    preserved.
+    """
+    try:
+        stripped = query.replace('"', "")
+        normalized = _WS_RE.sub(" ", stripped).strip()
+        return normalized or query
+    except Exception:  # noqa: BLE001 - never raise to the caller
+        return query
+
+
 def _validate_args(
     config: GreyCloudConfig, query: str, page_size: int
 ) -> Optional[str]:
@@ -296,6 +320,17 @@ def search_sources(
     if invalid:
         logger.warning("search_sources: %s", invalid)
         return []
+
+    # Discovery Engine treats double-quoted phrases as exact contiguous
+    # verbatim matches, which can collapse a keyword query to 0 results
+    # (diagnosis 1.5). Normalize once, right after validation, before the
+    # query reaches _search_payload.
+    if '"' in query:
+        logger.debug(
+            "search_sources: stripped %d quote character(s) from Discovery Engine search query",
+            query.count('"'),
+        )
+    query = _normalize_query(query)
 
     headers, auth_error = _build_headers(config)
     if auth_error:
@@ -375,6 +410,15 @@ async def asearch_sources(
     if invalid:
         logger.warning("asearch_sources: %s", invalid)
         return []
+
+    # See search_sources: normalize the query before it reaches
+    # _search_payload so double-quoted phrases cannot collapse the search.
+    if '"' in query:
+        logger.debug(
+            "asearch_sources: stripped %d quote character(s) from Discovery Engine search query",
+            query.count('"'),
+        )
+    query = _normalize_query(query)
 
     headers, auth_error = _build_headers(config)
     if auth_error:
