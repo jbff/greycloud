@@ -54,10 +54,29 @@ _WS_RE = re.compile(r"\s+")
 # apostrophes are deliberately excluded (see _normalize_query docstring).
 _QUOTE_RE = re.compile(r'["“”＂]')
 
+# Only *balanced* quote pairs are phrase delimiters. A lone quote is a unit
+# mark (inches/seconds/ditto, e.g. '15" laptop') and must survive; stripping
+# it would silently destroy the unit (review finding #6). The pair must
+# enclose content that starts and ends with a word character, so two unit
+# marks ('5" 6"') and quotes-only queries ('"""') are left untouched.
+_QUOTE_PAIR_RE = re.compile(
+    r'["“”＂](?=[^"“”＂\s])([^"“”＂]+?)(?<=[^"“”＂\s])["“”＂]'
+)
+
 
 def _collapse_ws(text: str) -> str:
     """Collapse runs of whitespace (incl. ``\\xa0``) to single spaces and trim."""
     return _WS_RE.sub(" ", text.replace("\xa0", " ")).strip()
+
+
+def _has_searchable_content(query: str) -> bool:
+    """True if the query has any content beyond quote characters.
+
+    A quotes-only query (e.g. ``'\"\"\"'``) has no searchable tokens once the
+    phrase delimiters are removed; sending it to Discovery Engine is a wasted
+    call (review finding #1).
+    """
+    return bool(_collapse_ws(_QUOTE_RE.sub(" ", query)))
 
 # Instruction line appended after the grounding block, mirroring the app's
 # knowledge-block pattern (diagnosis 4.3.2): quote only from these sources and
@@ -257,14 +276,15 @@ def _normalize_query(query: str) -> str:
     matches. A quoted long title exists in document *metadata*, not as
     contiguous body text, so the exact-phrase requirement can never be
     satisfied and keyword AND-semantics collapse the whole query to 0 results
-    (diagnosis section 1.5). Replace quote characters with a space so every
-    token participates as an ordinary keyword without adjacent tokens merging
-    (``"autism"inertia`` -> ``autism inertia``), and trim / collapse internal
-    whitespace.
+    (diagnosis section 1.5). Replace each *balanced* quote pair with a space so
+    every token participates as an ordinary keyword without adjacent tokens
+    merging (``"autism"inertia`` -> ``autism inertia``), and trim / collapse
+    internal whitespace.
 
     Covers the ASCII straight quote plus the curly (U+201C/U+201D) and
     fullwidth (U+FF02) forms users paste from word processors / CJK input.
-    Single quotes and apostrophes are left untouched.
+    Single quotes and apostrophes are left untouched, and a lone quote is
+    preserved as a unit mark (``'15" laptop'`` keeps its inch mark).
 
     Never raises: non-string input is returned unchanged, so the
     never-raise/degrade-to-ungrounded contract of the search functions is
@@ -272,16 +292,18 @@ def _normalize_query(query: str) -> str:
     """
     if not isinstance(query, str):
         return query
-    stripped = _QUOTE_RE.sub(" ", query)
+    stripped = _QUOTE_PAIR_RE.sub(r" \1 ", query)
     normalized = _collapse_ws(stripped)
     result = normalized or query
     if result != query and logger.isEnabledFor(logging.DEBUG):
-        n = len(_QUOTE_RE.findall(query))
+        n = len(_QUOTE_RE.findall(query)) - len(_QUOTE_RE.findall(result))
         if n:
             logger.debug(
                 "stripped %d quote character(s) from Discovery Engine search query",
                 n,
             )
+        else:
+            logger.debug("collapsed whitespace in Discovery Engine search query")
     return result
 
 
@@ -429,9 +451,17 @@ def search_sources(
         return []
 
     has_quotes = bool(_QUOTE_RE.search(query))
-    # Preserve exact-phrase semantics: search the quoted query first, and only
-    # fall back to the unquoted form when it returns no results.
-    first_query = _collapse_ws(query) if has_quotes else _normalize_query(query)
+    if has_quotes:
+        if not _has_searchable_content(query):
+            logger.debug(
+                "search_sources: query is only quote characters; nothing to search"
+            )
+            return []
+        # Preserve exact-phrase semantics: search the quoted query first, and
+        # only fall back to the unquoted form when it returns no results.
+        first_query = _collapse_ws(query)
+    else:
+        first_query = _normalize_query(query)
     sources, zero_results = _search_sources_once(
         config, first_query, page_size, max_chars, timeout
     )
@@ -543,7 +573,15 @@ async def asearch_sources(
         return []
 
     has_quotes = bool(_QUOTE_RE.search(query))
-    first_query = _collapse_ws(query) if has_quotes else _normalize_query(query)
+    if has_quotes:
+        if not _has_searchable_content(query):
+            logger.debug(
+                "asearch_sources: query is only quote characters; nothing to search"
+            )
+            return []
+        first_query = _collapse_ws(query)
+    else:
+        first_query = _normalize_query(query)
     sources, zero_results = await _asearch_sources_once(
         config, first_query, page_size, max_chars, timeout
     )

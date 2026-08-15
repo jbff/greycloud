@@ -472,6 +472,35 @@ def _two_fake_sources():
     ]
 
 
+class FakeResponse:
+    """Minimal requests.Response stand-in (mirrors tests/test_grounding.py)."""
+
+    def __init__(self, status_code=200, payload=None, text=""):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {}
+        self.text = text
+
+    def json(self):
+        return self._payload
+
+
+OK_PAYLOAD = {
+    "results": [
+        {
+            "document": {
+                "derivedStructData": {
+                    "title": "Guide_Is_This_Autism",
+                    "link": "gs://bucket/Guide_Is_This_Autism.pdf",
+                    "snippets": [
+                        {"snippet": "<b>Autistic inertia</b> is difficult to manage."}
+                    ],
+                }
+            }
+        }
+    ]
+}
+
+
 class TestGreyCloudClientGroundingInjection:
     """Integration tests for Discovery Engine grounding injection (inject mode)."""
 
@@ -721,3 +750,51 @@ class TestGreyCloudClientGroundingInjection:
         assert sent_config.tools == [explicit_tool]
         # Contents passed through unmodified.
         assert call_args[1]["contents"] is contents
+
+    def test_generate_content_normalizes_query_end_to_end(
+        self, sample_config, mock_generate_response
+    ):
+        """The full inject path runs real normalization: a quoted query that
+        returns 0 results falls back to the unquoted form before injection.
+
+        Unlike the other inject tests, search_sources is NOT mocked — only the
+        HTTP layer is — so _normalize_query and the retry_unquoted fallback
+        execute for real (review finding #14: normalization never ran
+        end-to-end through the client).
+        """
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+                with patch(
+                    "greycloud.grounding.requests.post",
+                    side_effect=[
+                        FakeResponse(200, {"results": []}),  # quoted -> 0 results
+                        FakeResponse(200, OK_PAYLOAD),  # unquoted -> results
+                    ],
+                ) as mock_post:
+                    mock_genai_client = MagicMock()
+                    mock_genai_client.models.generate_content.return_value = (
+                        mock_generate_response
+                    )
+                    mock_create.return_value = mock_genai_client
+
+                    client = GreyCloudClient(_grounding_config())
+                    contents = [
+                        types.Content(
+                            role="user",
+                            parts=[types.Part.from_text(text='"autistic inertia"')],
+                        )
+                    ]
+                    client.generate_content(contents)
+
+        # Two searches: quoted first, unquoted fallback on 0 results.
+        assert mock_post.call_count == 2
+        first = mock_post.call_args_list[0][1]["json"]["query"]
+        second = mock_post.call_args_list[1][1]["json"]["query"]
+        assert first == '"autistic inertia"'
+        assert second == "autistic inertia"
+
+        # The unquoted results were injected into the last user message.
+        call_args = mock_genai_client.models.generate_content.call_args
+        last_user = call_args[1]["contents"][-1]
+        assert last_user.parts[0].text.startswith("<grounding_sources>")
+        assert "Guide_Is_This_Autism" in last_user.parts[0].text

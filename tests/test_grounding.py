@@ -135,6 +135,16 @@ class TestNormalizeQuery:
         assert _normalize_query("children's questions") == "children's questions"
         assert _normalize_query("'single quoted' term") == "'single quoted' term"
 
+    def test_unit_marks_preserved(self):
+        # Review finding #6: inch/second/ditto marks are not phrase
+        # delimiters and must survive normalization. Only *balanced* quote
+        # pairs are stripped, so a lone quote (or two unpaired unit marks)
+        # is left intact.
+        assert _normalize_query('15" laptop') == '15" laptop'
+        assert _normalize_query("5'10\"") == "5'10\""
+        assert _normalize_query('5" 6"') == '5" 6"'
+        assert _normalize_query('a "b" c') == "a b c"
+
     def test_mixed_quotes_strip_only_double(self):
         assert _normalize_query('he said "it\'s fine"') == "he said it's fine"
 
@@ -245,6 +255,32 @@ class TestSearchSources:
                 with caplog.at_level("DEBUG", logger="greycloud.grounding"):
                     search_sources(grounding_config, "autistic inertia")
         assert not any("quote character(s)" in r.message for r in caplog.records)
+
+    def test_quotes_only_query_not_sent(self, grounding_config):
+        # Review finding #1: a query that is only quote characters has no
+        # searchable content once the delimiters are removed. It must not be
+        # sent to Discovery Engine at all.
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})) as mock_post:
+                sources = search_sources(grounding_config, '"""')
+        assert sources == []
+        assert mock_post.call_count == 0
+
+    def test_whitespace_collapsed_in_payload(self, grounding_config):
+        # Review finding #7: whitespace-only rewrites are applied (and now
+        # logged) even when the query has no quotes.
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})) as mock_post:
+                search_sources(grounding_config, "autistic   inertia")
+        assert mock_post.call_count == 1
+        assert mock_post.call_args[1]["json"]["query"] == "autistic inertia"
+
+    def test_debug_log_when_whitespace_collapsed(self, grounding_config, caplog):
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})):
+                with caplog.at_level("DEBUG", logger="greycloud.grounding"):
+                    search_sources(grounding_config, "autistic   inertia")
+        assert any("collapsed whitespace" in r.message for r in caplog.records)
 
     def test_page_size_maps_to_pageSize(self, grounding_config):
         payload = {"results": []}
@@ -561,6 +597,24 @@ class TestASearchSources:
             with patch_async_client(FakeResponse(200, {"results": []})) as factory:
                 await asearch_sources(grounding_config, "autistic inertia")
         post_mock = factory.return_value.__aenter__.return_value.post
+        assert post_mock.call_args[1]["json"]["query"] == "autistic inertia"
+
+    @pytest.mark.asyncio
+    async def test_quotes_only_query_not_sent(self, grounding_config):
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch_async_client(FakeResponse(200, {"results": []})) as factory:
+                sources = await asearch_sources(grounding_config, '"""')
+        post_mock = factory.return_value.__aenter__.return_value.post
+        assert sources == []
+        assert post_mock.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_whitespace_collapsed_in_payload(self, grounding_config):
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch_async_client(FakeResponse(200, {"results": []})) as factory:
+                await asearch_sources(grounding_config, "autistic   inertia")
+        post_mock = factory.return_value.__aenter__.return_value.post
+        assert post_mock.call_count == 1
         assert post_mock.call_args[1]["json"]["query"] == "autistic inertia"
 
     @pytest.mark.asyncio
