@@ -489,10 +489,10 @@ OK_PAYLOAD = {
         {
             "document": {
                 "derivedStructData": {
-                    "title": "Guide_Is_This_Autism",
-                    "link": "gs://bucket/Guide_Is_This_Autism.pdf",
+                    "title": "Guide_Renewable_Energy",
+                    "link": "gs://bucket/Guide_Renewable_Energy.pdf",
                     "snippets": [
-                        {"snippet": "<b>Autistic inertia</b> is difficult to manage."}
+                        {"snippet": "<b>Renewable energy</b> is difficult to store."}
                     ],
                 }
             }
@@ -781,7 +781,7 @@ class TestGreyCloudClientGroundingInjection:
                     contents = [
                         types.Content(
                             role="user",
-                            parts=[types.Part.from_text(text='"autistic inertia"')],
+                            parts=[types.Part.from_text(text='"renewable energy"')],
                         )
                     ]
                     client.generate_content(contents)
@@ -790,11 +790,11 @@ class TestGreyCloudClientGroundingInjection:
         assert mock_post.call_count == 2
         first = mock_post.call_args_list[0][1]["json"]["query"]
         second = mock_post.call_args_list[1][1]["json"]["query"]
-        assert first == '"autistic inertia"'
-        assert second == "autistic inertia"
+        assert first == '"renewable energy"'
+        assert second == "renewable energy"
 
         # The unquoted results were injected into the last user message.
         call_args = mock_genai_client.models.generate_content.call_args
         last_user = call_args[1]["contents"][-1]
         assert last_user.parts[0].text.startswith("<grounding_sources>")
-        assert "Guide_Is_This_Autism" in last_user.parts[0].text
+        assert "Guide_Renewable_Energy" in last_user.parts[0].text

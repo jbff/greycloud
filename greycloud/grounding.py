@@ -278,7 +278,7 @@ def _normalize_query(query: str) -> str:
     satisfied and keyword AND-semantics collapse the whole query to 0 results
     (diagnosis section 1.5). Replace each *balanced* quote pair with a space so
     every token participates as an ordinary keyword without adjacent tokens
-    merging (``"autism"inertia`` -> ``autism inertia``), and trim / collapse
+    merging (``"renewable"energy`` -> ``renewable energy``), and trim / collapse
     internal whitespace.
 
     Covers the ASCII straight quote plus the curly (U+201C/U+201D) and

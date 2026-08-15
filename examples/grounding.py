@@ -37,7 +37,7 @@ contents = [
         role="user",
         parts=[
             types.Part.from_text(
-                text="Using the knowledge base, quote one short sentence about autistic inertia."
+                text="Using the knowledge base, quote one short sentence about renewable energy."
             )
         ],
     )

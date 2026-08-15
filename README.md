@@ -407,7 +407,7 @@ client = GreyCloudClient(config)
 contents = [
     types.Content(
         role="user",
-        parts=[types.Part.from_text(text="Using the knowledge base, explain the diagnostic steps for adult ASD.")]
+        parts=[types.Part.from_text(text="Using the knowledge base, explain the benefits of renewable energy.")]
     )
 ]
 
