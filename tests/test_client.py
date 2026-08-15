@@ -503,6 +503,8 @@ class TestGreyCloudClientGroundingInjection:
         mock_search.assert_called_once()
         assert mock_search.call_args[0][0] is client.config
         assert mock_search.call_args[0][1] == "Hello"
+        # retry_unquoted defaults to True and is threaded through.
+        assert mock_search.call_args[1]["retry_unquoted"] is True
 
         call_args = mock_genai_client.models.generate_content.call_args
         sent_contents = call_args[1]["contents"]
@@ -519,6 +521,32 @@ class TestGreyCloudClientGroundingInjection:
         assert "[2] (Doc2" in last_user.parts[0].text
         # Original user text still present after the injected block.
         assert last_user.parts[-1].text == "Hello"
+
+    def test_generate_content_passes_retry_unquoted_flag(
+        self, sample_config, mock_generate_response
+    ):
+        """retry_unquoted is threaded from generate_content to search_sources."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources",
+                return_value=_two_fake_sources(),
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                contents = [
+                    types.Content(
+                        role="user", parts=[types.Part.from_text(text="Hello")]
+                    )
+                ]
+                client.generate_content(contents, retry_unquoted=False)
+
+        mock_search.assert_called_once()
+        assert mock_search.call_args[1]["retry_unquoted"] is False
 
     def test_generate_content_stream_inject_mode_injects_grounding_block(
         self, sample_config

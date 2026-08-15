@@ -250,6 +250,7 @@ class GreyCloudAsyncClient:
         self,
         contents: List[types.Content],
         tools: Optional[List[types.Tool]] = None,
+        retry_unquoted: bool = True,
     ) -> List[types.Content]:
         """Return the contents to send, injecting Discovery Engine grounding.
 
@@ -264,6 +265,10 @@ class GreyCloudAsyncClient:
         (grounding block prepended as a text part) is returned. A failed or
         empty search degrades to ungrounded generation (``asearch_sources``
         logs a WARNING on failure and never raises).
+
+        Args:
+            retry_unquoted: Passed through to :func:`asearch_sources`; see its
+                docstring for the quoted-query fallback behavior.
         """
         if tools is not None:
             # Explicit tools override: honor it as today, no injection.
@@ -280,7 +285,9 @@ class GreyCloudAsyncClient:
             # No user content (or empty user text): nothing to search on.
             return contents
 
-        sources = await asearch_sources(self.config, query)
+        sources = await asearch_sources(
+            self.config, query, retry_unquoted=retry_unquoted
+        )
         if not sources:
             # Search failures are logged at WARNING inside asearch_sources; an
             # empty result set is the genuine "no matches" case.
@@ -386,11 +393,19 @@ class GreyCloudAsyncClient:
         tools: Optional[List[types.Tool]] = None,
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
+        retry_unquoted: bool = True,
         **kwargs,
     ) -> types.GenerateContentResponse:
-        """Generate content with rate limiting."""
+        """Generate content with rate limiting.
+
+        Args:
+            retry_unquoted: Passed through to the grounding search; see
+                :func:`greycloud.grounding.asearch_sources`.
+        """
         model_name = model or self.config.model
-        contents = await self._apply_grounding_async(contents, tools)
+        contents = await self._apply_grounding_async(
+            contents, tools, retry_unquoted=retry_unquoted
+        )
         config = self._build_generate_config(
             system_instruction=system_instruction,
             temperature=temperature,
@@ -424,13 +439,21 @@ class GreyCloudAsyncClient:
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
         return_chunks: bool = False,
+        retry_unquoted: bool = True,
         **kwargs,
     ) -> AsyncGenerator[Union[str, types.GenerateContentResponse], None]:
-        """Generate content (streaming). Yields text chunks or raw response objects. Rate-limited."""
+        """Generate content (streaming). Yields text chunks or raw response objects. Rate-limited.
+
+        Args:
+            retry_unquoted: Passed through to the grounding search; see
+                :func:`greycloud.grounding.asearch_sources`.
+        """
         model_name = model or self.config.model
         # Async generator: the grounding search + injection run when the
         # generator is first advanced, before the first yield.
-        contents = await self._apply_grounding_async(contents, tools)
+        contents = await self._apply_grounding_async(
+            contents, tools, retry_unquoted=retry_unquoted
+        )
         config = self._build_generate_config(
             system_instruction=system_instruction,
             temperature=temperature,

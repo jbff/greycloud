@@ -48,6 +48,17 @@ _BACKOFF_BASE_SECONDS = 0.5
 _TAG_RE = re.compile(r"<[^>]*>")
 _WS_RE = re.compile(r"\s+")
 
+# Quote characters Discovery Engine treats as exact-phrase delimiters: the
+# ASCII straight quote plus the curly (U+201C/U+201D) and fullwidth (U+FF02)
+# forms users paste from word processors / CJK input. Single quotes and
+# apostrophes are deliberately excluded (see _normalize_query docstring).
+_QUOTE_RE = re.compile(r'["“”＂]')
+
+
+def _collapse_ws(text: str) -> str:
+    """Collapse runs of whitespace (incl. ``\\xa0``) to single spaces and trim."""
+    return _WS_RE.sub(" ", text.replace("\xa0", " ")).strip()
+
 # Instruction line appended after the grounding block, mirroring the app's
 # knowledge-block pattern (diagnosis 4.3.2): quote only from these sources and
 # cite each quote with its [n] citation number.
@@ -119,9 +130,7 @@ def _clean_snippet(text: Optional[str]) -> str:
         return ""
     text = _html.unescape(str(text))
     text = _TAG_RE.sub(" ", text)
-    text = text.replace("\xa0", " ")
-    text = _WS_RE.sub(" ", text)
-    return text.strip()
+    return _collapse_ws(text)
 
 
 def _shape_results(data: dict, max_chars: int) -> List[GroundingSource]:
@@ -248,21 +257,32 @@ def _normalize_query(query: str) -> str:
     matches. A quoted long title exists in document *metadata*, not as
     contiguous body text, so the exact-phrase requirement can never be
     satisfied and keyword AND-semantics collapse the whole query to 0 results
-    (diagnosis section 1.5). Strip ``"`` characters so every token participates
-    as an ordinary keyword, and trim / collapse internal whitespace.
+    (diagnosis section 1.5). Replace quote characters with a space so every
+    token participates as an ordinary keyword without adjacent tokens merging
+    (``"autism"inertia`` -> ``autism inertia``), and trim / collapse internal
+    whitespace.
 
+    Covers the ASCII straight quote plus the curly (U+201C/U+201D) and
+    fullwidth (U+FF02) forms users paste from word processors / CJK input.
     Single quotes and apostrophes are left untouched.
 
-    Never raises: on any anomaly the original query is returned unchanged, so
-    the never-raise/degrade-to-ungrounded contract of the search functions is
+    Never raises: non-string input is returned unchanged, so the
+    never-raise/degrade-to-ungrounded contract of the search functions is
     preserved.
     """
-    try:
-        stripped = query.replace('"', "")
-        normalized = _WS_RE.sub(" ", stripped).strip()
-        return normalized or query
-    except Exception:  # noqa: BLE001 - never raise to the caller
+    if not isinstance(query, str):
         return query
+    stripped = _QUOTE_RE.sub(" ", query)
+    normalized = _collapse_ws(stripped)
+    result = normalized or query
+    if result != query and logger.isEnabledFor(logging.DEBUG):
+        n = len(_QUOTE_RE.findall(query))
+        if n:
+            logger.debug(
+                "stripped %d quote character(s) from Discovery Engine search query",
+                n,
+            )
+    return result
 
 
 def _validate_args(
@@ -294,48 +314,24 @@ def _validate_args(
     return None
 
 
-def search_sources(
+def _search_sources_once(
     config: GreyCloudConfig,
     query: str,
-    page_size: int = 5,
-    max_chars: int = 8000,
-    timeout: float = 30.0,
-) -> List[GroundingSource]:
-    """Search the configured Discovery Engine datastore (sync).
+    page_size: int,
+    max_chars: int,
+    timeout: float,
+) -> Tuple[List[GroundingSource], bool]:
+    """Run the Discovery Engine search once, with the retry policy.
 
-    Never raises: on any exception, non-2xx response, or invalid args it logs a
-    warning and returns ``[]`` so the caller can generate without context.
-
-    Args:
-        config: GreyCloudConfig with ``vertex_ai_search_datastore`` set.
-        query: User query to search for.
-        page_size: Number of results to request (maps to ``pageSize``).
-        max_chars: Budget for total snippet text kept across sources.
-        timeout: Per-request timeout in seconds.
-
-    Returns:
-        List of up to ``page_size`` GroundingSources, ordered by relevance.
+    Returns ``(sources, zero_results)``: ``sources`` is the shaped result list
+    (``[]`` on any failure), and ``zero_results`` is True only when the search
+    succeeded (HTTP 200) but returned no results — the signal the caller uses
+    to decide whether to retry with the unquoted query.
     """
-    invalid = _validate_args(config, query, page_size)
-    if invalid:
-        logger.warning("search_sources: %s", invalid)
-        return []
-
-    # Discovery Engine treats double-quoted phrases as exact contiguous
-    # verbatim matches, which can collapse a keyword query to 0 results
-    # (diagnosis 1.5). Normalize once, right after validation, before the
-    # query reaches _search_payload.
-    if '"' in query:
-        logger.debug(
-            "search_sources: stripped %d quote character(s) from Discovery Engine search query",
-            query.count('"'),
-        )
-    query = _normalize_query(query)
-
     headers, auth_error = _build_headers(config)
     if auth_error:
         logger.warning("search_sources: %s", auth_error)
-        return []
+        return [], False
 
     datastore = getattr(config, "vertex_ai_search_datastore")
     last_exc: Optional[BaseException] = None
@@ -363,7 +359,7 @@ def search_sources(
                     response.status_code,
                     response.text[:300],
                 )
-                return []
+                return [], False
             try:
                 data = response.json()
             except ValueError as e:
@@ -374,8 +370,9 @@ def search_sources(
                     response.status_code,
                     e,
                 )
-                return []
-            return _shape_results(data, max_chars)
+                return [], False
+            sources = _shape_results(data, max_chars)
+            return sources, not sources
         except Exception as e:  # noqa: BLE001 - must never raise to the caller
             last_exc = e
             logger.warning(
@@ -391,39 +388,81 @@ def search_sources(
         _MAX_ATTEMPTS,
         last_exc,
     )
-    return []
+    return [], False
 
 
-async def asearch_sources(
+def search_sources(
     config: GreyCloudConfig,
     query: str,
     page_size: int = 5,
     max_chars: int = 8000,
     timeout: float = 30.0,
+    retry_unquoted: bool = True,
 ) -> List[GroundingSource]:
-    """Search the configured Discovery Engine datastore (async).
+    """Search the configured Discovery Engine datastore (sync).
 
-    Same contract as :func:`search_sources`: never raises, returns ``[]`` on
-    any failure so the caller can generate without context.
+    Never raises: on any exception, non-2xx response, or invalid args it logs a
+    warning and returns ``[]`` so the caller can generate without context.
+
+    Discovery Engine treats double-quoted phrases as exact contiguous verbatim
+    matches, which can collapse a keyword query to 0 results (diagnosis 1.5).
+    When the query contains quote characters, the quoted form is searched
+    first to preserve exact-phrase semantics; if it returns 0 results, the
+    search is retried with the unquoted form (see ``retry_unquoted``).
+
+    Args:
+        config: GreyCloudConfig with ``vertex_ai_search_datastore`` set.
+        query: User query to search for.
+        page_size: Number of results to request (maps to ``pageSize``).
+        max_chars: Budget for total snippet text kept across sources.
+        timeout: Per-request timeout in seconds.
+        retry_unquoted: When True (default) and the query contains quote
+            characters, fall back to the unquoted query if the quoted search
+            returns 0 results. Set False to disable the fallback.
+
+    Returns:
+        List of up to ``page_size`` GroundingSources, ordered by relevance.
     """
     invalid = _validate_args(config, query, page_size)
     if invalid:
-        logger.warning("asearch_sources: %s", invalid)
+        logger.warning("search_sources: %s", invalid)
         return []
 
-    # See search_sources: normalize the query before it reaches
-    # _search_payload so double-quoted phrases cannot collapse the search.
-    if '"' in query:
-        logger.debug(
-            "asearch_sources: stripped %d quote character(s) from Discovery Engine search query",
-            query.count('"'),
-        )
-    query = _normalize_query(query)
+    has_quotes = bool(_QUOTE_RE.search(query))
+    # Preserve exact-phrase semantics: search the quoted query first, and only
+    # fall back to the unquoted form when it returns no results.
+    first_query = _collapse_ws(query) if has_quotes else _normalize_query(query)
+    sources, zero_results = _search_sources_once(
+        config, first_query, page_size, max_chars, timeout
+    )
+    if sources or not has_quotes or not retry_unquoted or not zero_results:
+        return sources
+    unquoted = _normalize_query(query)
+    if unquoted == first_query:
+        # Nothing to fall back to (e.g. a quotes-only query): the unquoted
+        # form is identical, so a retry would be a duplicate search.
+        return sources
+    logger.debug(
+        "search_sources: quoted query returned 0 results; retrying unquoted"
+    )
+    sources, _ = _search_sources_once(
+        config, unquoted, page_size, max_chars, timeout
+    )
+    return sources
 
+
+async def _asearch_sources_once(
+    config: GreyCloudConfig,
+    query: str,
+    page_size: int,
+    max_chars: int,
+    timeout: float,
+) -> Tuple[List[GroundingSource], bool]:
+    """Async twin of :func:`_search_sources_once` (same contract)."""
     headers, auth_error = _build_headers(config)
     if auth_error:
         logger.warning("asearch_sources: %s", auth_error)
-        return []
+        return [], False
 
     datastore = getattr(config, "vertex_ai_search_datastore")
     last_exc: Optional[BaseException] = None
@@ -452,7 +491,7 @@ async def asearch_sources(
                     response.status_code,
                     response.text[:300],
                 )
-                return []
+                return [], False
             try:
                 data = response.json()
             except ValueError as e:
@@ -463,8 +502,9 @@ async def asearch_sources(
                     response.status_code,
                     e,
                 )
-                return []
-            return _shape_results(data, max_chars)
+                return [], False
+            sources = _shape_results(data, max_chars)
+            return sources, not sources
         except Exception as e:  # noqa: BLE001 - must never raise to the caller
             last_exc = e
             logger.warning(
@@ -480,7 +520,45 @@ async def asearch_sources(
         _MAX_ATTEMPTS,
         last_exc,
     )
-    return []
+    return [], False
+
+
+async def asearch_sources(
+    config: GreyCloudConfig,
+    query: str,
+    page_size: int = 5,
+    max_chars: int = 8000,
+    timeout: float = 30.0,
+    retry_unquoted: bool = True,
+) -> List[GroundingSource]:
+    """Search the configured Discovery Engine datastore (async).
+
+    Same contract as :func:`search_sources`: never raises, returns ``[]`` on
+    any failure so the caller can generate without context. See
+    :func:`search_sources` for the ``retry_unquoted`` behavior.
+    """
+    invalid = _validate_args(config, query, page_size)
+    if invalid:
+        logger.warning("asearch_sources: %s", invalid)
+        return []
+
+    has_quotes = bool(_QUOTE_RE.search(query))
+    first_query = _collapse_ws(query) if has_quotes else _normalize_query(query)
+    sources, zero_results = await _asearch_sources_once(
+        config, first_query, page_size, max_chars, timeout
+    )
+    if sources or not has_quotes or not retry_unquoted or not zero_results:
+        return sources
+    unquoted = _normalize_query(query)
+    if unquoted == first_query:
+        return sources
+    logger.debug(
+        "asearch_sources: quoted query returned 0 results; retrying unquoted"
+    )
+    sources, _ = await _asearch_sources_once(
+        config, unquoted, page_size, max_chars, timeout
+    )
+    return sources
 
 
 def build_grounding_context(

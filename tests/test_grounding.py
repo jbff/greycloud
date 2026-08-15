@@ -138,6 +138,23 @@ class TestNormalizeQuery:
     def test_mixed_quotes_strip_only_double(self):
         assert _normalize_query('he said "it\'s fine"') == "he said it's fine"
 
+    def test_adjacent_tokens_not_merged(self):
+        # Quotes are replaced with a space, not removed, so tokens adjacent to
+        # a quote stay separate (review finding: '"autism"inertia' previously
+        # became the single fused token 'autisminertia').
+        assert _normalize_query('"autism"inertia') == "autism inertia"
+        assert _normalize_query('5"6"') == "5 6"
+
+    def test_curly_quotes_stripped(self):
+        # Curly quotes (U+201C/U+201D) pasted from word processors are the
+        # common real-world form of the quoted-title collapse.
+        assert _normalize_query("“Is This Autism?” autistic inertia") == (
+            "Is This Autism? autistic inertia"
+        )
+
+    def test_fullwidth_quote_stripped(self):
+        assert _normalize_query("＂quoted＂") == "quoted"
+
     def test_only_quotes_returns_original(self):
         # Stripping all quotes leaves empty text; the conservative fallback
         # returns the original query unchanged (never an empty payload query).
@@ -174,14 +191,40 @@ class TestSearchSources:
         assert mock_post.call_args[1]["headers"] == {"Authorization": "Bearer tok"}
         assert mock_post.call_args[1]["timeout"] == 30.0
 
-    def test_quoted_query_stripped_in_payload(self, grounding_config):
+    def test_quoted_query_preserved_when_results_found(self, grounding_config):
+        # retry_unquoted (default True): the quoted query is searched first so
+        # exact-phrase semantics are preserved when it matches.
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)) as mock_post:
+                sources = search_sources(grounding_config, '"autistic inertia"')
+        assert len(sources) == 1
+        assert mock_post.call_count == 1
+        assert mock_post.call_args[1]["json"]["query"] == '"autistic inertia"'
+
+    def test_quoted_query_falls_back_to_unquoted_on_zero_results(self, grounding_config):
+        # Diagnosis 1.5 case: the quoted long title returns 0 results, so the
+        # search falls back to the unquoted query (one extra call).
         quoted = '"Is This Autism? A Guide for Clinicians and Everyone Else" autistic inertia'
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})) as mock_post:
-                search_sources(grounding_config, quoted)
-        body = mock_post.call_args[1]["json"]
-        assert '"' not in body["query"]
-        assert body["query"] == "Is This Autism? A Guide for Clinicians and Everyone Else autistic inertia"
+                sources = search_sources(grounding_config, quoted)
+        assert sources == []
+        assert mock_post.call_count == 2
+        first = mock_post.call_args_list[0][1]["json"]["query"]
+        second = mock_post.call_args_list[1][1]["json"]["query"]
+        assert first == quoted
+        assert '"' not in second
+        assert second == "Is This Autism? A Guide for Clinicians and Everyone Else autistic inertia"
+
+    def test_retry_unquoted_disabled_keeps_quoted_query(self, grounding_config):
+        # retry_unquoted=False: no fallback; the quoted query is searched once
+        # even when it returns 0 results.
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})) as mock_post:
+                sources = search_sources(grounding_config, '"autistic inertia"', retry_unquoted=False)
+        assert sources == []
+        assert mock_post.call_count == 1
+        assert mock_post.call_args[1]["json"]["query"] == '"autistic inertia"'
 
     def test_unquoted_query_unchanged_in_payload(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
@@ -478,15 +521,39 @@ class TestASearchSources:
         assert post_mock.call_args[1]["headers"] == {"Authorization": "Bearer tok"}
 
     @pytest.mark.asyncio
-    async def test_quoted_query_stripped_in_payload(self, grounding_config):
+    async def test_quoted_query_preserved_when_results_found(self, grounding_config):
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch_async_client(FakeResponse(200, OK_PAYLOAD)) as factory:
+                sources = await asearch_sources(grounding_config, '"autistic inertia"')
+        post_mock = factory.return_value.__aenter__.return_value.post
+        assert len(sources) == 1
+        assert post_mock.call_count == 1
+        assert post_mock.call_args[1]["json"]["query"] == '"autistic inertia"'
+
+    @pytest.mark.asyncio
+    async def test_quoted_query_falls_back_to_unquoted_on_zero_results(self, grounding_config):
         quoted = '"Is This Autism? A Guide for Clinicians and Everyone Else" autistic inertia'
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch_async_client(FakeResponse(200, {"results": []})) as factory:
-                await asearch_sources(grounding_config, quoted)
+                sources = await asearch_sources(grounding_config, quoted)
         post_mock = factory.return_value.__aenter__.return_value.post
-        body = post_mock.call_args[1]["json"]
-        assert '"' not in body["query"]
-        assert body["query"] == "Is This Autism? A Guide for Clinicians and Everyone Else autistic inertia"
+        assert sources == []
+        assert post_mock.call_count == 2
+        first = post_mock.call_args_list[0][1]["json"]["query"]
+        second = post_mock.call_args_list[1][1]["json"]["query"]
+        assert first == quoted
+        assert '"' not in second
+        assert second == "Is This Autism? A Guide for Clinicians and Everyone Else autistic inertia"
+
+    @pytest.mark.asyncio
+    async def test_retry_unquoted_disabled_keeps_quoted_query(self, grounding_config):
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch_async_client(FakeResponse(200, {"results": []})) as factory:
+                sources = await asearch_sources(grounding_config, '"autistic inertia"', retry_unquoted=False)
+        post_mock = factory.return_value.__aenter__.return_value.post
+        assert sources == []
+        assert post_mock.call_count == 1
+        assert post_mock.call_args[1]["json"]["query"] == '"autistic inertia"'
 
     @pytest.mark.asyncio
     async def test_unquoted_query_unchanged_in_payload(self, grounding_config):

@@ -249,6 +249,7 @@ class GreyCloudClient:
         self,
         contents: List[types.Content],
         tools: Optional[List[types.Tool]] = None,
+        retry_unquoted: bool = True,
     ) -> List[types.Content]:
         """Return the contents to send, injecting Discovery Engine grounding.
 
@@ -263,6 +264,10 @@ class GreyCloudClient:
         (grounding block prepended as a text part) is returned. A failed or
         empty search degrades to ungrounded generation (``search_sources`` logs
         a WARNING on failure and never raises).
+
+        Args:
+            retry_unquoted: Passed through to :func:`search_sources`; see its
+                docstring for the quoted-query fallback behavior.
         """
         if tools is not None:
             # Explicit tools override: honor it as today, no injection.
@@ -279,7 +284,7 @@ class GreyCloudClient:
             # No user content (or empty user text): nothing to search on.
             return contents
 
-        sources = search_sources(self.config, query)
+        sources = search_sources(self.config, query, retry_unquoted=retry_unquoted)
         if not sources:
             # Search failures are logged at WARNING inside search_sources; an
             # empty result set is the genuine "no matches" case.
@@ -403,6 +408,7 @@ class GreyCloudClient:
         tools: Optional[List[types.Tool]] = None,
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
+        retry_unquoted: bool = True,
         **kwargs,
     ) -> types.GenerateContentResponse:
         """
@@ -419,13 +425,15 @@ class GreyCloudClient:
             tools: Tools override
             thinking_level: Thinking level override
             cached_content: Cache name to use for context (see GreyCloudCache)
+            retry_unquoted: Passed through to the grounding search; see
+                :func:`greycloud.grounding.search_sources`.
             **kwargs: Additional parameters for GenerateContentConfig
 
         Returns:
             GenerateContentResponse
         """
         model_name = model or self.config.model
-        contents = self._apply_grounding(contents, tools)
+        contents = self._apply_grounding(contents, tools, retry_unquoted=retry_unquoted)
         config = self._build_generate_config(
             system_instruction=system_instruction,
             temperature=temperature,
@@ -455,6 +463,7 @@ class GreyCloudClient:
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
         return_chunks: bool = False,
+        retry_unquoted: bool = True,
         **kwargs,
     ) -> Generator[Union[str, types.GenerateContentResponse], None, None]:
         """
@@ -472,6 +481,8 @@ class GreyCloudClient:
             thinking_level: Thinking level override
             cached_content: Cache name to use for context (see GreyCloudCache)
             return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings
+            retry_unquoted: Passed through to the grounding search; see
+                :func:`greycloud.grounding.search_sources`.
             **kwargs: Additional parameters for GenerateContentConfig
 
         Yields:
@@ -480,7 +491,7 @@ class GreyCloudClient:
         model_name = model or self.config.model
         # Generator: the grounding search + injection run when the generator is
         # first advanced, before the first yield.
-        contents = self._apply_grounding(contents, tools)
+        contents = self._apply_grounding(contents, tools, retry_unquoted=retry_unquoted)
         config = self._build_generate_config(
             system_instruction=system_instruction,
             temperature=temperature,

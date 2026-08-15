@@ -723,6 +723,8 @@ class TestGreyCloudAsyncClientGroundingInjection:
         mock_search.assert_called_once()
         assert mock_search.call_args[0][0] is client.config
         assert mock_search.call_args[0][1] == "Hello"
+        # retry_unquoted defaults to True and is threaded through.
+        assert mock_search.call_args[1]["retry_unquoted"] is True
 
         call_args = mock_async_genai_client.aio.models.generate_content.call_args
         sent_contents = call_args[1]["contents"]
@@ -739,6 +741,36 @@ class TestGreyCloudAsyncClientGroundingInjection:
         assert "[2] (Doc2" in last_user.parts[0].text
         # Original user text still present after the injected block.
         assert last_user.parts[-1].text == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_generate_content_passes_retry_unquoted_flag(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """retry_unquoted is threaded from generate_content to asearch_sources."""
+        mock_response = MagicMock()
+        mock_response.text = "Hello world"
+        mock_async_genai_client.aio.models.generate_content.return_value = (
+            mock_response
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            with patch(
+                "greycloud.async_client.asearch_sources",
+                new_callable=AsyncMock,
+                return_value=_async_two_fake_sources(),
+            ) as mock_search:
+                client = GreyCloudAsyncClient(_async_grounding_config())
+                contents = [
+                    types.Content(
+                        role="user", parts=[types.Part.from_text(text="Hello")]
+                    )
+                ]
+                await client.generate_content(contents, retry_unquoted=False)
+
+        mock_search.assert_called_once()
+        assert mock_search.call_args[1]["retry_unquoted"] is False
 
     @pytest.mark.asyncio
     async def test_generate_content_stream_inject_mode_injects_grounding_block(
