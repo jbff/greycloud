@@ -55,6 +55,7 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
     - Safety settings
     - Thinking configuration
     - Vertex AI Search datastore + grounding mode (`"inject"` | `"tool"`)
+    - Grounding skip threshold (`min_grounding_query_chars`)
     - Batch/GCS bucket settings
 
 - **Resilient generation**
@@ -71,6 +72,10 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
   - Grounding mode (`grounding_mode`, default `"inject"`):
     - `"inject"` (default): GreyCloud runs the Discovery Engine search itself with your existing credentials and injects the top results as an attributed `<grounding_sources>` block into the prompt. This works with **every** model version — the server-side `tools.retrieval` grounding silently returns zero chunks on Gemini 3.x (see §5.8).
     - `"tool"`: legacy behavior — GreyCloud constructs the `types.Tool(retrieval=...)` and wires it into calls (for model versions where it still works, e.g. gemini-2.5).
+  - Per-call overrides on `generate_content` / `generate_content_stream` (both clients, and via `generate_with_retry`):
+    - `grounding_query="..."` — search this string instead of the verbatim last user message (the last turn is often a workflow instruction, not content); the block is still injected into the last user message.
+    - `grounding=False` — skip grounding entirely for this call (no search, no injection).
+  - `min_grounding_query_chars` (default `0`): when > 0, inject-mode grounding skips the search when the effective query is shorter than this many characters.
 
 - **Batch utilities**
   - `GreyCloudBatch` wraps the more verbose raw batch APIs:
@@ -416,6 +421,20 @@ print(response.text)
 ```
 
 With `use_vertex_ai_search=True`, the default `grounding_mode="inject"` runs a GreyCloud-side Discovery Engine search and injects the top results as a `<grounding_sources>` block into the prompt (the legacy `tools.retrieval` tool is dropped). Set `grounding_mode="tool"` to keep the legacy `tools.retrieval` behavior instead. The active path is logged at INFO level per request — enable INFO logging to see whether `grounding_mode=inject` or `tool` is in use.
+
+By default the search query is the verbatim text of the last user message. Pass `grounding_query` to search a distilled query instead — useful when the last turn is a workflow instruction ("Great, now let's do the summary.") rather than content — and `grounding=False` to skip grounding for a single call:
+
+```python
+# Ground a template/step turn with a distilled clinical (or domain) query:
+response = client.generate_content(
+    contents, grounding_query="ABAS functional impairment adult collateral reports"
+)
+
+# A conversational turn: no search at all.
+response = client.generate_content(contents, grounding=False)
+```
+
+For automatic suppression of short conversational turns, set `min_grounding_query_chars` in `GreyCloudConfig` (default `0`, off): when the effective query — `grounding_query` if given, else the last user message — is shorter than the threshold, the search is skipped and generation proceeds ungrounded.
 
 ### 5.9 Batch Processing with GCS
 

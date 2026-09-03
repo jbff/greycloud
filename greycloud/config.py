@@ -67,6 +67,12 @@ class GreyCloudConfig:
     # Grounding: "inject" (default) runs the Discovery Engine search in GreyCloud and
     # injects results into the prompt. "tool" keeps the legacy tools.retrieval.
     grounding_mode: str = "inject"  # "inject" | "tool"
+    # Skip-guard threshold (RAG proposal item 2): when > 0, inject-mode
+    # grounding skips the Discovery Engine search when the effective query
+    # (per-call grounding_query if given, else the last user message) is
+    # shorter than this many characters. 0 (default) preserves current
+    # behavior — conversational turns like "thanks" then still trigger a search.
+    min_grounding_query_chars: int = 0
 
     # Thinking config
     # When None, no thinking config is sent. Set to "LOW", "MEDIUM", or "HIGH"
@@ -115,3 +121,6 @@ class GreyCloudConfig:
 
         if self.grounding_mode not in ("inject", "tool"):
             raise ValueError("grounding_mode must be 'inject' or 'tool'")
+
+        if self.min_grounding_query_chars < 0:
+            raise ValueError("min_grounding_query_chars must be >= 0")

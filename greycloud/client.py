@@ -250,6 +250,8 @@ class GreyCloudClient:
         contents: List[types.Content],
         tools: Optional[List[types.Tool]] = None,
         retry_unquoted: bool = True,
+        grounding_query: Optional[str] = None,
+        grounding: bool = True,
     ) -> List[types.Content]:
         """Return the contents to send, injecting Discovery Engine grounding.
 
@@ -268,9 +270,19 @@ class GreyCloudClient:
         Args:
             retry_unquoted: Passed through to :func:`search_sources`; see its
                 docstring for the quoted-query fallback behavior.
+            grounding_query: When a non-blank string, used verbatim as the
+                Discovery Engine query instead of the last user message's text
+                (RAG proposal item 1: the last user turn is often a workflow
+                instruction, not searchable content). The injection still
+                prepends the block to the last user message.
+            grounding: When False, suppress grounding entirely for this call
+                (RAG proposal item 2): no search, no injection.
         """
         if tools is not None:
             # Explicit tools override: honor it as today, no injection.
+            return contents
+        if not grounding:
+            # Per-call skip: caller asked for no grounding on this request.
             return contents
         if not (
             self.config.use_vertex_ai_search
@@ -279,9 +291,28 @@ class GreyCloudClient:
         ):
             return contents
 
+        override = grounding_query.strip() if isinstance(grounding_query, str) else ""
         last_user_index, query = self._last_user_query(contents)
-        if last_user_index is None or not query:
-            # No user content (or empty user text): nothing to search on.
+        if last_user_index is None:
+            # No user content: nothing to search on, nowhere to inject.
+            return contents
+        if override:
+            query = override
+        if not query:
+            # Empty user text (and no override): nothing to search on.
+            return contents
+
+        # Config-level skip guard: conversational turns ("thanks", "ok,
+        # standby") below the threshold should not fire a search at all.
+        # Applies to the effective query, so a caller-supplied grounding_query
+        # is gated by it too.
+        min_chars = getattr(self.config, "min_grounding_query_chars", 0)
+        if isinstance(min_chars, int) and min_chars > 0 and len(query) < min_chars:
+            logger.info(
+                "grounding_mode=inject, query shorter than "
+                "min_grounding_query_chars=%d; skipping search",
+                min_chars,
+            )
             return contents
 
         sources = search_sources(self.config, query, retry_unquoted=retry_unquoted)
@@ -409,6 +440,8 @@ class GreyCloudClient:
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
         retry_unquoted: bool = True,
+        grounding_query: Optional[str] = None,
+        grounding: bool = True,
         **kwargs,
     ) -> types.GenerateContentResponse:
         """
@@ -427,13 +460,25 @@ class GreyCloudClient:
             cached_content: Cache name to use for context (see GreyCloudCache)
             retry_unquoted: Passed through to the grounding search; see
                 :func:`greycloud.grounding.search_sources`.
+            grounding_query: Optional explicit Discovery Engine query used in
+                place of the last user message's verbatim text; the grounding
+                block is still injected into the last user message. Ignored
+                (and current behavior preserved) when omitted.
+            grounding: When False, skip grounding entirely for this call (no
+                search, no injection). Defaults to True.
             **kwargs: Additional parameters for GenerateContentConfig
 
         Returns:
             GenerateContentResponse
         """
         model_name = model or self.config.model
-        contents = self._apply_grounding(contents, tools, retry_unquoted=retry_unquoted)
+        contents = self._apply_grounding(
+            contents,
+            tools,
+            retry_unquoted=retry_unquoted,
+            grounding_query=grounding_query,
+            grounding=grounding,
+        )
         config = self._build_generate_config(
             system_instruction=system_instruction,
             temperature=temperature,
@@ -464,6 +509,8 @@ class GreyCloudClient:
         cached_content: Optional[str] = None,
         return_chunks: bool = False,
         retry_unquoted: bool = True,
+        grounding_query: Optional[str] = None,
+        grounding: bool = True,
         **kwargs,
     ) -> Generator[Union[str, types.GenerateContentResponse], None, None]:
         """
@@ -483,6 +530,12 @@ class GreyCloudClient:
             return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings
             retry_unquoted: Passed through to the grounding search; see
                 :func:`greycloud.grounding.search_sources`.
+            grounding_query: Optional explicit Discovery Engine query used in
+                place of the last user message's verbatim text; the grounding
+                block is still injected into the last user message. Ignored
+                (and current behavior preserved) when omitted.
+            grounding: When False, skip grounding entirely for this call (no
+                search, no injection). Defaults to True.
             **kwargs: Additional parameters for GenerateContentConfig
 
         Yields:
@@ -491,7 +544,13 @@ class GreyCloudClient:
         model_name = model or self.config.model
         # Generator: the grounding search + injection run when the generator is
         # first advanced, before the first yield.
-        contents = self._apply_grounding(contents, tools, retry_unquoted=retry_unquoted)
+        contents = self._apply_grounding(
+            contents,
+            tools,
+            retry_unquoted=retry_unquoted,
+            grounding_query=grounding_query,
+            grounding=grounding,
+        )
         config = self._build_generate_config(
             system_instruction=system_instruction,
             temperature=temperature,

@@ -666,9 +666,7 @@ class TestGreyCloudClientGroundingInjection:
                 )
                 mock_create.return_value = mock_genai_client
 
-                client = GreyCloudClient(
-                    _grounding_config(grounding_mode="tool")
-                )
+                client = GreyCloudClient(_grounding_config(grounding_mode="tool"))
                 contents = [
                     types.Content(
                         role="user", parts=[types.Part.from_text(text="Hello")]
@@ -798,3 +796,241 @@ class TestGreyCloudClientGroundingInjection:
         last_user = call_args[1]["contents"][-1]
         assert last_user.parts[0].text.startswith("<grounding_sources>")
         assert "Guide_Renewable_Energy" in last_user.parts[0].text
+
+
+class TestGroundingQueryAndSkip:
+    """Per-call grounding_query override, grounding skip flag, and the
+    config-level min_grounding_query_chars threshold (RAG proposal items 1-2).
+    All mock search_sources; no live calls."""
+
+    @staticmethod
+    def _contents(text="Hello"):
+        return [types.Content(role="user", parts=[types.Part.from_text(text=text)])]
+
+    @staticmethod
+    def _patched_client(mock_search_returns=_two_fake_sources()):
+        """Return (context manager factory usage pattern) as two patches."""
+        return (
+            patch("greycloud.client.create_client"),
+            patch(
+                "greycloud.client.search_sources",
+                return_value=mock_search_returns,
+            ),
+        )
+
+    def test_generate_content_grounding_query_used_as_search_query(
+        self, sample_config, mock_generate_response
+    ):
+        """grounding_query replaces the verbatim last user message as the
+        Discovery Engine query (workflow-instruction turns are not clinical
+        content); injection still targets the last user message."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources",
+                return_value=_two_fake_sources(),
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                client.generate_content(
+                    self._contents("Great, now let's do the summary."),
+                    grounding_query="ABAS functional impairment adult collateral reports",
+                )
+
+        mock_search.assert_called_once()
+        assert (
+            mock_search.call_args[0][1]
+            == "ABAS functional impairment adult collateral reports"
+        )
+
+    def test_generate_content_blank_grounding_query_falls_back_to_user_message(
+        self, sample_config, mock_generate_response
+    ):
+        """A whitespace-only grounding_query is treated as absent."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                client.generate_content(self._contents(), grounding_query="   ")
+
+        assert mock_search.call_args[0][1] == "Hello"
+
+    def test_generate_content_grounding_false_skips_search(
+        self, sample_config, mock_generate_response
+    ):
+        """grounding=False suppresses the search and injection for one call."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                contents = self._contents()
+                client.generate_content(contents, grounding=False)
+
+        mock_search.assert_not_called()
+        call_args = mock_genai_client.models.generate_content.call_args
+        assert call_args[1]["contents"] is contents
+
+    def test_generate_content_stream_grounding_query_used_as_search_query(
+        self, sample_config
+    ):
+        """The streaming path honors grounding_query the same way."""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.candidates[0].content.parts[0].text = "Hello"
+        mock_chunk.text = "Hello"
+
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content_stream.return_value = [
+                    mock_chunk
+                ]
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                list(
+                    client.generate_content_stream(
+                        self._contents("Ok, standby."),
+                        grounding_query="distressed child custody intake",
+                    )
+                )
+
+        assert mock_search.call_args[0][1] == "distressed child custody intake"
+
+    def test_generate_content_stream_grounding_false_skips_search(self, sample_config):
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.candidates[0].content.parts[0].text = "Hello"
+        mock_chunk.text = "Hello"
+
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content_stream.return_value = [
+                    mock_chunk
+                ]
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                contents = self._contents()
+                list(client.generate_content_stream(contents, grounding=False))
+
+        mock_search.assert_not_called()
+
+    def test_min_grounding_query_chars_skips_short_query(
+        self, sample_config, mock_generate_response
+    ):
+        """A last-user message shorter than the threshold skips the search."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(
+                    _grounding_config(min_grounding_query_chars=10)
+                )
+                contents = self._contents("thanks")
+                client.generate_content(contents)
+
+        mock_search.assert_not_called()
+        call_args = mock_genai_client.models.generate_content.call_args
+        assert call_args[1]["contents"] is contents
+
+    def test_min_grounding_query_chars_long_query_still_searches(
+        self, sample_config, mock_generate_response
+    ):
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config(min_grounding_query_chars=5))
+                client.generate_content(self._contents("ABAS impairment domains"))
+
+        assert mock_search.call_args[0][1] == "ABAS impairment domains"
+
+    def test_min_grounding_query_chars_applies_to_grounding_query(
+        self, sample_config, mock_generate_response
+    ):
+        """The threshold gates the effective query: a short user message with
+        a long grounding_query still searches (the override is the query)."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(
+                    _grounding_config(min_grounding_query_chars=10)
+                )
+                client.generate_content(
+                    self._contents("ok"),
+                    grounding_query="ABAS functional impairment adult collateral reports",
+                )
+
+        assert (
+            mock_search.call_args[0][1]
+            == "ABAS functional impairment adult collateral reports"
+        )
+
+    def test_generate_with_retry_threads_grounding_query(
+        self, sample_config, mock_generate_response
+    ):
+        """grounding_query flows through generate_with_retry's **kwargs."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ) as mock_search:
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                client.generate_with_retry(
+                    self._contents(),
+                    grounding_query="ABAS functional impairment",
+                )
+
+        assert mock_search.call_args[0][1] == "ABAS functional impairment"

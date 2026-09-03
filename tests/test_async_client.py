@@ -699,9 +699,7 @@ class TestGreyCloudAsyncClientGroundingInjection:
         to a copy of the last user message, and no retrieval tool is sent."""
         mock_response = MagicMock()
         mock_response.text = "Hello world"
-        mock_async_genai_client.aio.models.generate_content.return_value = (
-            mock_response
-        )
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
 
         with patch(
             "greycloud.async_client.create_client", return_value=mock_async_genai_client
@@ -749,9 +747,7 @@ class TestGreyCloudAsyncClientGroundingInjection:
         """retry_unquoted is threaded from generate_content to asearch_sources."""
         mock_response = MagicMock()
         mock_response.text = "Hello world"
-        mock_async_genai_client.aio.models.generate_content.return_value = (
-            mock_response
-        )
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
 
         with patch(
             "greycloud.async_client.create_client", return_value=mock_async_genai_client
@@ -823,9 +819,7 @@ class TestGreyCloudAsyncClientGroundingInjection:
         """Empty search results degrade to ungrounded generation: still called,
         contents unmodified, no grounding part, no exception."""
         mock_response = MagicMock()
-        mock_async_genai_client.aio.models.generate_content.return_value = (
-            mock_response
-        )
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
 
         with patch(
             "greycloud.async_client.create_client", return_value=mock_async_genai_client
@@ -861,9 +855,7 @@ class TestGreyCloudAsyncClientGroundingInjection:
         """Tool mode is unchanged: retrieval tool sent, no search performed,
         contents unmodified."""
         mock_response = MagicMock()
-        mock_async_genai_client.aio.models.generate_content.return_value = (
-            mock_response
-        )
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
 
         with patch(
             "greycloud.async_client.create_client", return_value=mock_async_genai_client
@@ -898,9 +890,7 @@ class TestGreyCloudAsyncClientGroundingInjection:
     ):
         """Caller's contents list and Content objects are never mutated."""
         mock_response = MagicMock()
-        mock_async_genai_client.aio.models.generate_content.return_value = (
-            mock_response
-        )
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
 
         with patch(
             "greycloud.async_client.create_client", return_value=mock_async_genai_client
@@ -935,9 +925,7 @@ class TestGreyCloudAsyncClientGroundingInjection:
             )
         )
         mock_response = MagicMock()
-        mock_async_genai_client.aio.models.generate_content.return_value = (
-            mock_response
-        )
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
 
         with patch(
             "greycloud.async_client.create_client", return_value=mock_async_genai_client
@@ -958,3 +946,257 @@ class TestGreyCloudAsyncClientGroundingInjection:
         assert sent_config.tools == [explicit_tool]
         # Contents passed through unmodified.
         assert call_args[1]["contents"] is contents
+
+
+class TestGroundingQueryAndSkip:
+    """Per-call grounding_query override, grounding skip flag, and the
+    config-level min_grounding_query_chars threshold (RAG proposal items 1-2).
+    All mock asearch_sources; no live calls."""
+
+    @staticmethod
+    def _contents(text="Hello"):
+        return [types.Content(role="user", parts=[types.Part.from_text(text=text)])]
+
+    @pytest.mark.asyncio
+    async def test_generate_content_grounding_query_used_as_search_query(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """grounding_query replaces the verbatim last user message as the
+        Discovery Engine query; injection still targets the last user message."""
+        mock_response = MagicMock()
+        mock_response.text = "Hello world"
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            with patch(
+                "greycloud.async_client.asearch_sources",
+                new_callable=AsyncMock,
+                return_value=_async_two_fake_sources(),
+            ) as mock_search:
+                client = GreyCloudAsyncClient(_async_grounding_config())
+                await client.generate_content(
+                    self._contents("Great, now let's do the summary."),
+                    grounding_query="ABAS functional impairment adult collateral reports",
+                )
+
+        mock_search.assert_called_once()
+        assert (
+            mock_search.call_args[0][1]
+            == "ABAS functional impairment adult collateral reports"
+        )
+
+    @pytest.mark.asyncio
+    async def test_generate_content_blank_grounding_query_falls_back_to_user_message(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """A whitespace-only grounding_query is treated as absent."""
+        mock_response = MagicMock()
+        mock_response.text = "Hello world"
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            with patch(
+                "greycloud.async_client.asearch_sources",
+                new_callable=AsyncMock,
+                return_value=_async_two_fake_sources(),
+            ) as mock_search:
+                client = GreyCloudAsyncClient(_async_grounding_config())
+                await client.generate_content(self._contents(), grounding_query="   ")
+
+        assert mock_search.call_args[0][1] == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_generate_content_grounding_false_skips_search(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """grounding=False suppresses the search and injection for one call."""
+        mock_response = MagicMock()
+        mock_response.text = "Hello world"
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            with patch(
+                "greycloud.async_client.asearch_sources",
+                new_callable=AsyncMock,
+                return_value=_async_two_fake_sources(),
+            ) as mock_search:
+                client = GreyCloudAsyncClient(_async_grounding_config())
+                contents = self._contents()
+                await client.generate_content(contents, grounding=False)
+
+        mock_search.assert_not_called()
+        call_args = mock_async_genai_client.aio.models.generate_content.call_args
+        assert call_args[1]["contents"] is contents
+
+    @pytest.mark.asyncio
+    async def test_generate_content_stream_grounding_query_used_as_search_query(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """The streaming path honors grounding_query the same way."""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.text = "Hello"
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(mock_chunk)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            with patch(
+                "greycloud.async_client.asearch_sources",
+                new_callable=AsyncMock,
+                return_value=_async_two_fake_sources(),
+            ) as mock_search:
+                client = GreyCloudAsyncClient(_async_grounding_config())
+                async for _ in client.generate_content_stream(
+                    self._contents("Ok, standby."),
+                    grounding_query="distressed child custody intake",
+                ):
+                    pass
+
+        assert mock_search.call_args[0][1] == "distressed child custody intake"
+
+    @pytest.mark.asyncio
+    async def test_generate_content_stream_grounding_false_skips_search(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.text = "Hello"
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(mock_chunk)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            with patch(
+                "greycloud.async_client.asearch_sources",
+                new_callable=AsyncMock,
+                return_value=_async_two_fake_sources(),
+            ) as mock_search:
+                client = GreyCloudAsyncClient(_async_grounding_config())
+                contents = self._contents()
+                async for _ in client.generate_content_stream(
+                    contents, grounding=False
+                ):
+                    pass
+
+        mock_search.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_min_grounding_query_chars_skips_short_query(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """A last-user message shorter than the threshold skips the search."""
+        mock_response = MagicMock()
+        mock_response.text = "Hello world"
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            with patch(
+                "greycloud.async_client.asearch_sources",
+                new_callable=AsyncMock,
+                return_value=_async_two_fake_sources(),
+            ) as mock_search:
+                client = GreyCloudAsyncClient(
+                    _async_grounding_config(min_grounding_query_chars=10)
+                )
+                contents = self._contents("thanks")
+                await client.generate_content(contents)
+
+        mock_search.assert_not_called()
+        call_args = mock_async_genai_client.aio.models.generate_content.call_args
+        assert call_args[1]["contents"] is contents
+
+    @pytest.mark.asyncio
+    async def test_min_grounding_query_chars_long_query_still_searches(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        mock_response = MagicMock()
+        mock_response.text = "Hello world"
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            with patch(
+                "greycloud.async_client.asearch_sources",
+                new_callable=AsyncMock,
+                return_value=_async_two_fake_sources(),
+            ) as mock_search:
+                client = GreyCloudAsyncClient(
+                    _async_grounding_config(min_grounding_query_chars=5)
+                )
+                await client.generate_content(self._contents("ABAS impairment domains"))
+
+        assert mock_search.call_args[0][1] == "ABAS impairment domains"
+
+    @pytest.mark.asyncio
+    async def test_min_grounding_query_chars_applies_to_grounding_query(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """The threshold gates the effective query: a short user message with
+        a long grounding_query still searches (the override is the query)."""
+        mock_response = MagicMock()
+        mock_response.text = "Hello world"
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            with patch(
+                "greycloud.async_client.asearch_sources",
+                new_callable=AsyncMock,
+                return_value=_async_two_fake_sources(),
+            ) as mock_search:
+                client = GreyCloudAsyncClient(
+                    _async_grounding_config(min_grounding_query_chars=10)
+                )
+                await client.generate_content(
+                    self._contents("ok"),
+                    grounding_query="ABAS functional impairment adult collateral reports",
+                )
+
+        assert (
+            mock_search.call_args[0][1]
+            == "ABAS functional impairment adult collateral reports"
+        )
+
+    @pytest.mark.asyncio
+    async def test_generate_with_retry_threads_grounding_query(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """grounding_query flows through generate_with_retry's **kwargs."""
+        mock_response = MagicMock()
+        mock_response.text = "Hello world"
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            with patch(
+                "greycloud.async_client.asearch_sources",
+                new_callable=AsyncMock,
+                return_value=_async_two_fake_sources(),
+            ) as mock_search:
+                client = GreyCloudAsyncClient(_async_grounding_config())
+                await client.generate_with_retry(
+                    self._contents(),
+                    grounding_query="ABAS functional impairment",
+                )
+
+        assert mock_search.call_args[0][1] == "ABAS functional impairment"

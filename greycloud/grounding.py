@@ -48,6 +48,11 @@ _BACKOFF_BASE_SECONDS = 0.5
 _TAG_RE = re.compile(r"<[^>]*>")
 _WS_RE = re.compile(r"\s+")
 
+# Floor for the per-source fair share of the character budget (see
+# _shape_results): a long result list must not shrink an individual source's
+# share to a useless fragment.
+_MIN_PER_SOURCE_CHARS = 250
+
 # Quote characters Discovery Engine treats as exact-phrase delimiters: the
 # ASCII straight quote plus the curly (U+201C/U+201D) and fullwidth (U+FF02)
 # forms users paste from word processors / CJK input. Single quotes and
@@ -59,9 +64,7 @@ _QUOTE_RE = re.compile(r'["“”＂]')
 # it would silently destroy the unit (review finding #6). The pair must
 # enclose content that starts and ends with a word character, so two unit
 # marks ('5" 6"') and quotes-only queries ('"""') are left untouched.
-_QUOTE_PAIR_RE = re.compile(
-    r'["“”＂](?=[^"“”＂\s])([^"“”＂]+?)(?<=[^"“”＂\s])["“”＂]'
-)
+_QUOTE_PAIR_RE = re.compile(r'["“”＂](?=[^"“”＂\s])([^"“”＂]+?)(?<=[^"“”＂\s])["“”＂]')
 
 
 def _collapse_ws(text: str) -> str:
@@ -78,12 +81,17 @@ def _has_searchable_content(query: str) -> bool:
     """
     return bool(_collapse_ws(_QUOTE_RE.sub(" ", query)))
 
+
 # Instruction line appended after the grounding block, mirroring the app's
-# knowledge-block pattern (diagnosis 4.3.2): quote only from these sources and
-# cite each quote with its [n] citation number.
+# knowledge-block pattern (diagnosis 4.3.2): when the model quotes, it quotes
+# only from these sources and cites each quote with its [n] citation number.
+# Deliberately conditional (RAG proposal item 3): the unconditional phrasing
+# implied every response must contain a quote/citation, and because the block
+# is prepended to the last user message the instruction outranked the system
+# prompt — callers saw citations leak into pleasantries and sign-offs.
 _INSTRUCTION = (
-    "Quote only from the sources above, and cite each quoted passage with its "
-    "[n] citation number in brackets."
+    "When you quote from the sources above, quote only from them, and cite "
+    "each quoted passage with its [n] citation number in brackets."
 )
 
 
@@ -156,10 +164,18 @@ def _shape_results(data: dict, max_chars: int) -> List[GroundingSource]:
     """Extract GroundingSources from a Discovery Engine ``:search`` response.
 
     Each ``results[i].document.derivedStructData`` contributes ``title``,
-    ``link``, and the first ``snippets[*].snippet`` (HTML-cleaned). ``index``
-    is 1-based by relevance order. The total snippet text kept is bounded by
-    ``max_chars`` (snippets truncated from the end), mirroring the token budget
-    cap used when injecting the context block.
+    ``link``, and a passage (HTML-cleaned). Passages prefer the first
+    ``extractiveAnswers[*].content`` (paragraph-scale, quote-ready text; the
+    REST API returns the camelCase key, but the snake_case spelling is also
+    accepted) and fall back to the first ``snippets[*].snippet`` when no
+    non-empty answer exists. ``index`` is 1-based by relevance order.
+
+    The total passage text kept is bounded by ``max_chars`` (truncated from
+    the end), mirroring the token budget cap used when injecting the context
+    block. Because extractive answers are paragraph-scale, each source is
+    additionally capped at an even share of the budget (with a floor so a
+    long result list cannot shrink the share to nothing) — otherwise the
+    first answers eat the whole budget and later sources keep nothing.
     """
     if not isinstance(data, dict):
         return []
@@ -167,6 +183,9 @@ def _shape_results(data: dict, max_chars: int) -> List[GroundingSource]:
     sources: List[GroundingSource] = []
     results = data.get("results") or []
     remaining = max(0, max_chars)
+    per_source_cap = (
+        max(_MIN_PER_SOURCE_CHARS, max_chars // len(results)) if results else 0
+    )
 
     for i, item in enumerate(results):
         if not isinstance(item, dict):
@@ -181,20 +200,40 @@ def _shape_results(data: dict, max_chars: int) -> List[GroundingSource]:
         title = dsd.get("title") or ""
         link = dsd.get("link") or ""
 
-        raw_snippet = ""
-        # Malformed-shape responses may carry a non-list ``snippets`` (e.g. a
-        # dict); treat that as "no snippet" instead of raising inside the
-        # enclosing try (which would burn retry attempts on a shape we can't fix).
-        snippets = dsd.get("snippets") or []
-        if isinstance(snippets, list) and snippets:
-            first = snippets[0]
-            if isinstance(first, dict):
-                raw_snippet = first.get("snippet", "")
-            else:
-                raw_snippet = str(first)
-        snippet = _clean_snippet(raw_snippet)
+        raw_passage = ""
+        # Extractive answers first (paragraph-scale); the REST API uses the
+        # camelCase key. Malformed shapes (non-list) are treated as "no
+        # answers" rather than raising inside the enclosing try, which would
+        # burn retry attempts on a shape we can't fix.
+        for key in ("extractiveAnswers", "extractive_answers"):
+            answers = dsd.get(key) or []
+            if isinstance(answers, list):
+                for answer in answers:
+                    if isinstance(answer, dict):
+                        content = _clean_snippet(answer.get("content"))
+                        if content:
+                            raw_passage = content
+                            break
+            if raw_passage:
+                break
+        # Snippet fallback (1-3 sentence keyword-context fragment).
+        if not raw_passage:
+            # Malformed-shape responses may carry a non-list ``snippets`` (e.g. a
+            # dict); treat that as "no snippet" instead of raising inside the
+            # enclosing try (which would burn retry attempts on a shape we can't fix).
+            snippets = dsd.get("snippets") or []
+            if isinstance(snippets, list) and snippets:
+                first = snippets[0]
+                if isinstance(first, dict):
+                    raw_passage = first.get("snippet", "")
+                else:
+                    raw_passage = str(first)
+        snippet = _clean_snippet(raw_passage)
 
-        # Bound total snippet text: truncate later snippets first.
+        # Fair share of the budget, then bound the total: truncate later
+        # sources first once the budget runs out.
+        if snippet and per_source_cap and len(snippet) > per_source_cap:
+            snippet = snippet[:per_source_cap].rstrip()
         if snippet:
             if remaining <= 0:
                 snippet = ""
@@ -265,7 +304,14 @@ def _search_payload(query: str, page_size: int) -> dict:
     return {
         "query": query,
         "pageSize": max(1, page_size),
-        "contentSearchSpec": {"snippetSpec": {"returnSnippet": True}},
+        # Extractive answers return paragraph-scale passages extracted around
+        # the query — quote-ready text rather than 1-3 sentence keyword
+        # fragments (RAG proposal item 4). Additive in the :search request:
+        # stores that return no answers degrade to the snippet behavior.
+        "contentSearchSpec": {
+            "snippetSpec": {"returnSnippet": True},
+            "extractiveContentSpec": {"maxExtractiveAnswerCount": 2},
+        },
     }
 
 
@@ -362,7 +408,9 @@ def _search_sources_once(
         try:
             url = _search_url(datastore)
             payload = _search_payload(query, page_size)
-            response = requests.post(url, json=payload, headers=headers, timeout=timeout)
+            response = requests.post(
+                url, json=payload, headers=headers, timeout=timeout
+            )
             if response.status_code >= 500 or response.status_code == 429:
                 last_exc = RuntimeError(
                     f"Discovery Engine search returned HTTP {response.status_code}"
@@ -373,7 +421,7 @@ def _search_sources_once(
                     response.status_code,
                 )
                 if attempt < _MAX_ATTEMPTS - 1:
-                    time.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
+                    time.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
                 continue
             if response.status_code < 200 or response.status_code >= 300:
                 logger.warning(
@@ -403,7 +451,7 @@ def _search_sources_once(
                 e,
             )
             if attempt < _MAX_ATTEMPTS - 1:
-                time.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
+                time.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
 
     logger.warning(
         "search_sources: Discovery Engine search failed after %d attempts: %s",
@@ -472,12 +520,8 @@ def search_sources(
         # Nothing to fall back to (e.g. a quotes-only query): the unquoted
         # form is identical, so a retry would be a duplicate search.
         return sources
-    logger.debug(
-        "search_sources: quoted query returned 0 results; retrying unquoted"
-    )
-    sources, _ = _search_sources_once(
-        config, unquoted, page_size, max_chars, timeout
-    )
+    logger.debug("search_sources: quoted query returned 0 results; retrying unquoted")
+    sources, _ = _search_sources_once(config, unquoted, page_size, max_chars, timeout)
     return sources
 
 
@@ -513,7 +557,7 @@ async def _asearch_sources_once(
                     response.status_code,
                 )
                 if attempt < _MAX_ATTEMPTS - 1:
-                    await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
+                    await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
                 continue
             if response.status_code < 200 or response.status_code >= 300:
                 logger.warning(
@@ -543,7 +587,7 @@ async def _asearch_sources_once(
                 e,
             )
             if attempt < _MAX_ATTEMPTS - 1:
-                await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2 ** attempt))
+                await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
 
     logger.warning(
         "asearch_sources: Discovery Engine search failed after %d attempts: %s",
@@ -590,9 +634,7 @@ async def asearch_sources(
     unquoted = _normalize_query(query)
     if unquoted == first_query:
         return sources
-    logger.debug(
-        "asearch_sources: quoted query returned 0 results; retrying unquoted"
-    )
+    logger.debug("asearch_sources: quoted query returned 0 results; retrying unquoted")
     sources, _ = await _asearch_sources_once(
         config, unquoted, page_size, max_chars, timeout
     )
@@ -612,8 +654,8 @@ def build_grounding_context(
         [2] (Title2 — gs://source2.pdf)
         "Snippet2 ..."
         </grounding_sources>
-        Quote only from the sources above, and cite each quoted passage with
-        its [n] citation number in brackets.
+        When you quote from the sources above, quote only from them, and cite
+        each quoted passage with its [n] citation number in brackets.
 
     The block never exceeds ``max_chars`` characters: snippets are truncated
     from the end (later sources first) until the block fits. Returns the empty

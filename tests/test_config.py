@@ -259,3 +259,33 @@ class TestGreyCloudConfig:
                 project_id="test-project", thinking_level=None
             )
             assert config_none.thinking_level is None
+
+    def test_config_min_grounding_query_chars_default_off(self):
+        """min_grounding_query_chars defaults to 0 (skip guard off)"""
+        import subprocess
+
+        with patch.object(subprocess, "run") as mock_run:
+            mock_run.return_value.returncode = 0
+            config = GreyCloudConfig(project_id="test-project")
+
+            assert config.min_grounding_query_chars == 0
+
+    def test_config_min_grounding_query_chars_positive(self):
+        import subprocess
+
+        with patch.object(subprocess, "run") as mock_run:
+            mock_run.return_value.returncode = 0
+            config = GreyCloudConfig(
+                project_id="test-project", min_grounding_query_chars=25
+            )
+
+            assert config.min_grounding_query_chars == 25
+
+    def test_config_min_grounding_query_chars_negative_raises(self):
+        """A negative threshold is invalid: it would silently disable nothing"""
+        import subprocess
+
+        with patch.object(subprocess, "run") as mock_run:
+            mock_run.return_value.returncode = 0
+            with pytest.raises(ValueError, match="min_grounding_query_chars"):
+                GreyCloudConfig(project_id="test-project", min_grounding_query_chars=-1)

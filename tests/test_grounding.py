@@ -17,6 +17,7 @@ from greycloud.grounding import (
     _clean_snippet,
     _MAX_ATTEMPTS,
     _normalize_query,
+    _shape_results,
 )
 
 DATASTORE = (
@@ -32,7 +33,9 @@ OK_PAYLOAD = {
                     "title": "Guide_Renewable_Energy",
                     "link": "gs://bucket/Guide_Renewable_Energy.pdf",
                     "snippets": [
-                        {"snippet": "<b>Renewable energy</b> is difficult &nbsp; to store."}
+                        {
+                            "snippet": "<b>Renewable energy</b> is difficult &nbsp; to store."
+                        }
                     ],
                 }
             }
@@ -88,21 +91,36 @@ def patch_async_client(result, side_effect=None):
 class TestDiscoveryEndpointForDatastore:
     def test_global(self):
         path = "projects/p/locations/global/collections/default_collection/dataStores/d"
-        assert discovery_endpoint_for_datastore(path) == "https://discoveryengine.googleapis.com"
+        assert (
+            discovery_endpoint_for_datastore(path)
+            == "https://discoveryengine.googleapis.com"
+        )
 
     def test_us(self):
-        assert discovery_endpoint_for_datastore(DATASTORE) == "https://us-discoveryengine.googleapis.com"
+        assert (
+            discovery_endpoint_for_datastore(DATASTORE)
+            == "https://us-discoveryengine.googleapis.com"
+        )
 
     def test_eu(self):
         path = "projects/p/locations/eu/collections/default_collection/dataStores/d"
-        assert discovery_endpoint_for_datastore(path) == "https://eu-discoveryengine.googleapis.com"
+        assert (
+            discovery_endpoint_for_datastore(path)
+            == "https://eu-discoveryengine.googleapis.com"
+        )
 
     def test_unknown_location_falls_back_to_global(self):
         path = "projects/p/locations/asia/collections/default_collection/dataStores/d"
-        assert discovery_endpoint_for_datastore(path) == "https://discoveryengine.googleapis.com"
+        assert (
+            discovery_endpoint_for_datastore(path)
+            == "https://discoveryengine.googleapis.com"
+        )
 
     def test_missing_location_falls_back_to_global(self):
-        assert discovery_endpoint_for_datastore("projects/p/dataStores/d") == "https://discoveryengine.googleapis.com"
+        assert (
+            discovery_endpoint_for_datastore("projects/p/dataStores/d")
+            == "https://discoveryengine.googleapis.com"
+        )
 
 
 class TestNormalizeQuery:
@@ -119,8 +137,12 @@ class TestNormalizeQuery:
         # Diagnosis 1.5: the quoted full title collapses the search to 0
         # results while the unquoted variant returns 5. Normalization must
         # turn the quoted form into exactly the unquoted form.
-        quoted = '"The Impact of Climate Change on Coastal Communities" renewable energy'
-        unquoted = "The Impact of Climate Change on Coastal Communities renewable energy"
+        quoted = (
+            '"The Impact of Climate Change on Coastal Communities" renewable energy'
+        )
+        unquoted = (
+            "The Impact of Climate Change on Coastal Communities renewable energy"
+        )
         assert _normalize_query(quoted) == unquoted
 
     def test_internal_whitespace_collapsed_and_trimmed(self):
@@ -178,8 +200,14 @@ class TestNormalizeQuery:
 
 class TestSearchSources:
     def test_request_shape_and_result_extraction(self, grounding_config):
-        with patch("greycloud.grounding._build_headers", return_value=({"Authorization": "Bearer tok"}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)) as mock_post:
+        with patch(
+            "greycloud.grounding._build_headers",
+            return_value=({"Authorization": "Bearer tok"}, None),
+        ):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, OK_PAYLOAD),
+            ) as mock_post:
                 sources = search_sources(grounding_config, "renewable energy")
 
         assert len(sources) == 1
@@ -205,18 +233,28 @@ class TestSearchSources:
         # retry_unquoted (default True): the quoted query is searched first so
         # exact-phrase semantics are preserved when it matches.
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, OK_PAYLOAD),
+            ) as mock_post:
                 sources = search_sources(grounding_config, '"renewable energy"')
         assert len(sources) == 1
         assert mock_post.call_count == 1
         assert mock_post.call_args[1]["json"]["query"] == '"renewable energy"'
 
-    def test_quoted_query_falls_back_to_unquoted_on_zero_results(self, grounding_config):
+    def test_quoted_query_falls_back_to_unquoted_on_zero_results(
+        self, grounding_config
+    ):
         # Diagnosis 1.5 case: the quoted long title returns 0 results, so the
         # search falls back to the unquoted query (one extra call).
-        quoted = '"The Impact of Climate Change on Coastal Communities" renewable energy'
+        quoted = (
+            '"The Impact of Climate Change on Coastal Communities" renewable energy'
+        )
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": []}),
+            ) as mock_post:
                 sources = search_sources(grounding_config, quoted)
         assert sources == []
         assert mock_post.call_count == 2
@@ -224,34 +262,51 @@ class TestSearchSources:
         second = mock_post.call_args_list[1][1]["json"]["query"]
         assert first == quoted
         assert '"' not in second
-        assert second == "The Impact of Climate Change on Coastal Communities renewable energy"
+        assert (
+            second
+            == "The Impact of Climate Change on Coastal Communities renewable energy"
+        )
 
     def test_retry_unquoted_disabled_keeps_quoted_query(self, grounding_config):
         # retry_unquoted=False: no fallback; the quoted query is searched once
         # even when it returns 0 results.
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})) as mock_post:
-                sources = search_sources(grounding_config, '"renewable energy"', retry_unquoted=False)
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": []}),
+            ) as mock_post:
+                sources = search_sources(
+                    grounding_config, '"renewable energy"', retry_unquoted=False
+                )
         assert sources == []
         assert mock_post.call_count == 1
         assert mock_post.call_args[1]["json"]["query"] == '"renewable energy"'
 
     def test_unquoted_query_unchanged_in_payload(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": []}),
+            ) as mock_post:
                 search_sources(grounding_config, "renewable energy")
         assert mock_post.call_args[1]["json"]["query"] == "renewable energy"
 
     def test_debug_log_when_quotes_stripped(self, grounding_config, caplog):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": []}),
+            ):
                 with caplog.at_level("DEBUG", logger="greycloud.grounding"):
                     search_sources(grounding_config, '"quoted" term')
         assert any("stripped 2 quote character(s)" in r.message for r in caplog.records)
 
     def test_no_debug_log_when_no_quotes(self, grounding_config, caplog):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": []}),
+            ):
                 with caplog.at_level("DEBUG", logger="greycloud.grounding"):
                     search_sources(grounding_config, "renewable energy")
         assert not any("quote character(s)" in r.message for r in caplog.records)
@@ -261,7 +316,10 @@ class TestSearchSources:
         # searchable content once the delimiters are removed. It must not be
         # sent to Discovery Engine at all.
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": []}),
+            ) as mock_post:
                 sources = search_sources(grounding_config, '"""')
         assert sources == []
         assert mock_post.call_count == 0
@@ -270,14 +328,20 @@ class TestSearchSources:
         # Review finding #7: whitespace-only rewrites are applied (and now
         # logged) even when the query has no quotes.
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": []}),
+            ) as mock_post:
                 search_sources(grounding_config, "renewable   energy")
         assert mock_post.call_count == 1
         assert mock_post.call_args[1]["json"]["query"] == "renewable energy"
 
     def test_debug_log_when_whitespace_collapsed(self, grounding_config, caplog):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, {"results": []})):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": []}),
+            ):
                 with caplog.at_level("DEBUG", logger="greycloud.grounding"):
                     search_sources(grounding_config, "renewable   energy")
         assert any("collapsed whitespace" in r.message for r in caplog.records)
@@ -285,19 +349,41 @@ class TestSearchSources:
     def test_page_size_maps_to_pageSize(self, grounding_config):
         payload = {"results": []}
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, payload)) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, payload),
+            ) as mock_post:
                 search_sources(grounding_config, "q", page_size=8)
         assert mock_post.call_args[1]["json"]["pageSize"] == 8
 
     def test_index_is_one_based(self, grounding_config):
         payload = {
             "results": [
-                {"document": {"derivedStructData": {"title": "T1", "link": "L1", "snippets": [{"snippet": "one"}]}}},
-                {"document": {"derivedStructData": {"title": "T2", "link": "L2", "snippets": [{"snippet": "two"}]}}},
+                {
+                    "document": {
+                        "derivedStructData": {
+                            "title": "T1",
+                            "link": "L1",
+                            "snippets": [{"snippet": "one"}],
+                        }
+                    }
+                },
+                {
+                    "document": {
+                        "derivedStructData": {
+                            "title": "T2",
+                            "link": "L2",
+                            "snippets": [{"snippet": "two"}],
+                        }
+                    }
+                },
             ]
         }
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, payload)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, payload),
+            ):
                 sources = search_sources(grounding_config, "q")
         assert [s.index for s in sources] == [1, 2]
         assert [s.title for s in sources] == ["T1", "T2"]
@@ -305,57 +391,90 @@ class TestSearchSources:
     def test_snippet_html_stripping_and_entity_decoding(self, grounding_config):
         payload = {
             "results": [
-                {"document": {"derivedStructData": {
-                    "title": "T", "link": "L",
-                    "snippets": [{"snippet": "<b>Bold</b> &amp; <i>italic</i> &nbsp; text"}]}}}
+                {
+                    "document": {
+                        "derivedStructData": {
+                            "title": "T",
+                            "link": "L",
+                            "snippets": [
+                                {
+                                    "snippet": "<b>Bold</b> &amp; <i>italic</i> &nbsp; text"
+                                }
+                            ],
+                        }
+                    }
+                }
             ]
         }
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, payload)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, payload),
+            ):
                 sources = search_sources(grounding_config, "q")
         assert sources[0].snippet == "Bold & italic text"
 
     def test_clean_snippet_direct(self):
-        assert _clean_snippet("<b>Some</b> text &amp; more&nbsp;here") == "Some text & more here"
+        assert (
+            _clean_snippet("<b>Some</b> text &amp; more&nbsp;here")
+            == "Some text & more here"
+        )
         assert _clean_snippet("&lt;b&gt;escaped&lt;/b&gt;") == "escaped"
         assert _clean_snippet(None) == ""
 
     def test_http_5xx_returns_empty(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(503, {}, "err")):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(503, {}, "err"),
+            ):
                 with patch("greycloud.grounding.time.sleep"):
                     assert search_sources(grounding_config, "q") == []
 
     def test_non_2xx_returns_empty(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(403, {}, "forbidden")):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(403, {}, "forbidden"),
+            ):
                 assert search_sources(grounding_config, "q") == []
 
     def test_network_error_returns_empty(self, grounding_config):
         import requests
 
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", side_effect=requests.ConnectionError("down")):
+            with patch(
+                "greycloud.grounding.requests.post",
+                side_effect=requests.ConnectionError("down"),
+            ):
                 with patch("greycloud.grounding.time.sleep"):
                     assert search_sources(grounding_config, "q") == []
 
     def test_malformed_json_returns_empty_without_retry(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=BadJSONResponse(200)) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post", return_value=BadJSONResponse(200)
+            ) as mock_post:
                 assert search_sources(grounding_config, "q") == []
                 # Unparseable body is a server-data problem: single attempt, no retry.
                 assert mock_post.call_count == 1
 
     def test_5xx_retries_then_empty(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(500, {}, "err")) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(500, {}, "err"),
+            ) as mock_post:
                 with patch("greycloud.grounding.time.sleep"):
                     assert search_sources(grounding_config, "q") == []
                 assert mock_post.call_count == _MAX_ATTEMPTS
 
     def test_no_backoff_sleep_on_final_attempt(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(500, {}, "err")):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(500, {}, "err"),
+            ):
                 with patch("greycloud.grounding.time.sleep") as mock_sleep:
                     assert search_sources(grounding_config, "q") == []
                     assert mock_sleep.call_count == _MAX_ATTEMPTS - 1
@@ -363,7 +482,9 @@ class TestSearchSources:
     def test_retry_recovers_on_second_attempt(self, grounding_config):
         responses = [FakeResponse(503, {}, "err"), FakeResponse(200, OK_PAYLOAD)]
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", side_effect=responses) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post", side_effect=responses
+            ) as mock_post:
                 with patch("greycloud.grounding.time.sleep"):
                     sources = search_sources(grounding_config, "q")
         assert len(sources) == 1
@@ -372,7 +493,10 @@ class TestSearchSources:
     def test_429_retries_then_empty(self, grounding_config):
         # 429 is the classic transient Discovery Engine throttle: retried like 5xx.
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(429, {}, "throttled")) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(429, {}, "throttled"),
+            ) as mock_post:
                 with patch("greycloud.grounding.time.sleep"):
                     assert search_sources(grounding_config, "q") == []
                 assert mock_post.call_count == _MAX_ATTEMPTS
@@ -380,7 +504,9 @@ class TestSearchSources:
     def test_429_recovers_on_second_attempt(self, grounding_config):
         responses = [FakeResponse(429, {}, "throttled"), FakeResponse(200, OK_PAYLOAD)]
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", side_effect=responses) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post", side_effect=responses
+            ) as mock_post:
                 with patch("greycloud.grounding.time.sleep"):
                     sources = search_sources(grounding_config, "q")
         assert len(sources) == 1
@@ -391,12 +517,22 @@ class TestSearchSources:
         # yield an empty snippet (not raise, not burn a retry attempt).
         payload = {
             "results": [
-                {"document": {"derivedStructData": {
-                    "title": "T", "link": "L", "snippets": {"snippet": "not a list"}}}}
+                {
+                    "document": {
+                        "derivedStructData": {
+                            "title": "T",
+                            "link": "L",
+                            "snippets": {"snippet": "not a list"},
+                        }
+                    }
+                }
             ]
         }
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, payload)) as mock_post:
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, payload),
+            ) as mock_post:
                 sources = search_sources(grounding_config, "q")
         assert len(sources) == 1
         assert sources[0].title == "T"
@@ -413,31 +549,45 @@ class TestSearchSources:
             assert mock_post.call_count == 0
 
     def test_missing_datastore_returns_empty_without_request(self):
-        config = GreyCloudConfig(project_id="p", location="us-east4", vertex_ai_search_datastore=None)
+        config = GreyCloudConfig(
+            project_id="p", location="us-east4", vertex_ai_search_datastore=None
+        )
         with patch("greycloud.grounding.requests.post") as mock_post:
             assert search_sources(config, "q") == []
             assert mock_post.call_count == 0
 
     def test_wrong_typed_datastore_returns_empty_without_request(self):
-        config = GreyCloudConfig(project_id="p", location="us-east4", vertex_ai_search_datastore=12345)
+        config = GreyCloudConfig(
+            project_id="p", location="us-east4", vertex_ai_search_datastore=12345
+        )
         with patch("greycloud.grounding.requests.post") as mock_post:
             assert search_sources(config, "q") == []
             assert mock_post.call_count == 0
 
-    def test_wrong_typed_page_size_returns_empty_without_request(self, grounding_config):
+    def test_wrong_typed_page_size_returns_empty_without_request(
+        self, grounding_config
+    ):
         with patch("greycloud.grounding.requests.post") as mock_post:
             assert search_sources(grounding_config, "q", page_size="five") == []
             assert mock_post.call_count == 0
 
     def test_auth_failure_returns_empty_without_request(self, grounding_config):
-        with patch("greycloud.grounding._build_headers", return_value=(None, "no creds")):
+        with patch(
+            "greycloud.grounding._build_headers", return_value=(None, "no creds")
+        ):
             with patch("greycloud.grounding.requests.post") as mock_post:
                 assert search_sources(grounding_config, "q") == []
                 assert mock_post.call_count == 0
 
     def test_api_key_header_path(self, grounding_config):
-        with patch("greycloud.grounding._build_headers", return_value=({"x-goog-api-key": "key-abc"}, None)):
-            with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)) as mock_post:
+        with patch(
+            "greycloud.grounding._build_headers",
+            return_value=({"x-goog-api-key": "key-abc"}, None),
+        ):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, OK_PAYLOAD),
+            ) as mock_post:
                 search_sources(grounding_config, "q")
         assert mock_post.call_args[1]["headers"] == {"x-goog-api-key": "key-abc"}
 
@@ -464,7 +614,10 @@ class TestCredentialRefresh:
         creds = self.FakeCreds(token="valid", expired=False)
         with patch("greycloud.grounding.get_credentials", return_value=creds):
             with patch("google.auth.transport.requests.Request") as mock_request:
-                with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)):
+                with patch(
+                    "greycloud.grounding.requests.post",
+                    return_value=FakeResponse(200, OK_PAYLOAD),
+                ):
                     sources = search_sources(grounding_config, "q")
 
         assert len(sources) == 1
@@ -475,7 +628,10 @@ class TestCredentialRefresh:
         creds = self.FakeCreds(token="stale", expired=True)
         with patch("greycloud.grounding.get_credentials", return_value=creds):
             with patch("google.auth.transport.requests.Request") as mock_request:
-                with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)):
+                with patch(
+                    "greycloud.grounding.requests.post",
+                    return_value=FakeResponse(200, OK_PAYLOAD),
+                ):
                     sources = search_sources(grounding_config, "q")
 
         assert len(sources) == 1
@@ -486,7 +642,10 @@ class TestCredentialRefresh:
         creds = self.FakeCreds(token=None, expired=True)
         with patch("greycloud.grounding.get_credentials", return_value=creds):
             with patch("google.auth.transport.requests.Request"):
-                with patch("greycloud.grounding.requests.post", return_value=FakeResponse(200, OK_PAYLOAD)):
+                with patch(
+                    "greycloud.grounding.requests.post",
+                    return_value=FakeResponse(200, OK_PAYLOAD),
+                ):
                     sources = search_sources(grounding_config, "q")
 
         assert len(sources) == 1
@@ -496,8 +655,18 @@ class TestCredentialRefresh:
 class TestBuildGroundingContext:
     def test_renders_numbered_sources(self):
         sources = [
-            GroundingSource(title="Guide_Renewable_Energy", link="gs://bucket/Guide.pdf", snippet="Passage one.", index=1),
-            GroundingSource(title="Doc2", link="gs://bucket/doc2.pdf", snippet="Passage two.", index=2),
+            GroundingSource(
+                title="Guide_Renewable_Energy",
+                link="gs://bucket/Guide.pdf",
+                snippet="Passage one.",
+                index=1,
+            ),
+            GroundingSource(
+                title="Doc2",
+                link="gs://bucket/doc2.pdf",
+                snippet="Passage two.",
+                index=2,
+            ),
         ]
         ctx = build_grounding_context(sources)
         assert ctx.startswith("<grounding_sources>")
@@ -513,7 +682,8 @@ class TestBuildGroundingContext:
 
     def test_max_chars_cap_never_exceeded(self):
         sources = [
-            GroundingSource(title="T", link="L", snippet="y" * 100, index=i) for i in range(1, 6)
+            GroundingSource(title="T", link="L", snippet="y" * 100, index=i)
+            for i in range(1, 6)
         ]
         for cap in (0, 10, 100, 1000, 8000):
             ctx = build_grounding_context(sources, max_chars=cap)
@@ -535,7 +705,10 @@ class TestBuildGroundingContext:
 class TestASearchSources:
     @pytest.mark.asyncio
     async def test_success_and_request_shape(self, grounding_config):
-        with patch("greycloud.grounding._build_headers", return_value=({"Authorization": "Bearer tok"}, None)):
+        with patch(
+            "greycloud.grounding._build_headers",
+            return_value=({"Authorization": "Bearer tok"}, None),
+        ):
             with patch_async_client(FakeResponse(200, OK_PAYLOAD)) as factory:
                 sources = await asearch_sources(grounding_config, "renewable energy")
 
@@ -567,8 +740,12 @@ class TestASearchSources:
         assert post_mock.call_args[1]["json"]["query"] == '"renewable energy"'
 
     @pytest.mark.asyncio
-    async def test_quoted_query_falls_back_to_unquoted_on_zero_results(self, grounding_config):
-        quoted = '"The Impact of Climate Change on Coastal Communities" renewable energy'
+    async def test_quoted_query_falls_back_to_unquoted_on_zero_results(
+        self, grounding_config
+    ):
+        quoted = (
+            '"The Impact of Climate Change on Coastal Communities" renewable energy'
+        )
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch_async_client(FakeResponse(200, {"results": []})) as factory:
                 sources = await asearch_sources(grounding_config, quoted)
@@ -579,13 +756,18 @@ class TestASearchSources:
         second = post_mock.call_args_list[1][1]["json"]["query"]
         assert first == quoted
         assert '"' not in second
-        assert second == "The Impact of Climate Change on Coastal Communities renewable energy"
+        assert (
+            second
+            == "The Impact of Climate Change on Coastal Communities renewable energy"
+        )
 
     @pytest.mark.asyncio
     async def test_retry_unquoted_disabled_keeps_quoted_query(self, grounding_config):
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch_async_client(FakeResponse(200, {"results": []})) as factory:
-                sources = await asearch_sources(grounding_config, '"renewable energy"', retry_unquoted=False)
+                sources = await asearch_sources(
+                    grounding_config, '"renewable energy"', retry_unquoted=False
+                )
         post_mock = factory.return_value.__aenter__.return_value.post
         assert sources == []
         assert post_mock.call_count == 1
@@ -623,7 +805,10 @@ class TestASearchSources:
             with patch_async_client(FakeResponse(503, {}, "err")) as factory:
                 with patch("greycloud.grounding.asyncio.sleep"):
                     assert await asearch_sources(grounding_config, "q") == []
-        assert factory.return_value.__aenter__.return_value.post.call_count == _MAX_ATTEMPTS
+        assert (
+            factory.return_value.__aenter__.return_value.post.call_count
+            == _MAX_ATTEMPTS
+        )
 
     @pytest.mark.asyncio
     async def test_429_returns_empty(self, grounding_config):
@@ -631,7 +816,10 @@ class TestASearchSources:
             with patch_async_client(FakeResponse(429, {}, "throttled")) as factory:
                 with patch("greycloud.grounding.asyncio.sleep"):
                     assert await asearch_sources(grounding_config, "q") == []
-        assert factory.return_value.__aenter__.return_value.post.call_count == _MAX_ATTEMPTS
+        assert (
+            factory.return_value.__aenter__.return_value.post.call_count
+            == _MAX_ATTEMPTS
+        )
 
     @pytest.mark.asyncio
     async def test_non_2xx_returns_empty(self, grounding_config):
@@ -667,7 +855,141 @@ class TestASearchSources:
 
     @pytest.mark.asyncio
     async def test_wrong_typed_datastore_returns_empty_without_request(self):
-        config = GreyCloudConfig(project_id="p", location="us-east4", vertex_ai_search_datastore=12345)
+        config = GreyCloudConfig(
+            project_id="p", location="us-east4", vertex_ai_search_datastore=12345
+        )
         with patch("greycloud.grounding.httpx.AsyncClient") as mock_client:
             assert await asearch_sources(config, "q") == []
             assert mock_client.call_count == 0
+
+
+class TestInstructionLine:
+    """The injected instruction is conditional (RAG proposal item 3): it must
+    not imply every response must contain a quote/citation, only that any
+    quote comes from the sources and is cited."""
+
+    def test_build_grounding_context_uses_conditional_instruction(self):
+        sources = [GroundingSource(title="T", link="L", snippet="S", index=1)]
+        ctx = build_grounding_context(sources)
+        assert (
+            "When you quote from the sources above, quote only from them, and "
+            "cite each quoted passage with its [n] citation number in brackets."
+        ) in ctx
+        assert "Quote only from the sources above," not in ctx
+
+
+class TestSearchPayloadSpec:
+    """RAG proposal item 4: request paragraph-scale extractive answers
+    alongside the keyword snippets (snippets kept as fallback)."""
+
+    def test_payload_requests_extractive_answers_alongside_snippets(
+        self, grounding_config
+    ):
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": []}),
+            ) as mock_post:
+                search_sources(grounding_config, "q")
+        spec = mock_post.call_args[1]["json"]["contentSearchSpec"]
+        assert spec["snippetSpec"] == {"returnSnippet": True}
+        assert spec["extractiveContentSpec"] == {"maxExtractiveAnswerCount": 2}
+
+
+class TestShapeResults:
+    """_shape_results prefers extractive answers (paragraph-scale, quote-ready)
+    over keyword snippets and shares the character budget across sources."""
+
+    @staticmethod
+    def _payload(dsd):
+        return {
+            "results": [
+                {"document": {"derivedStructData": {"title": "T", "link": "L", **dsd}}}
+            ]
+        }
+
+    def test_prefers_extractive_answer_content_camel_case(self):
+        data = self._payload(
+            {
+                "snippets": [{"snippet": "keyword fragment"}],
+                "extractiveAnswers": [
+                    {"content": "<p>Full paragraph-scale passage.</p>"}
+                ],
+            }
+        )
+        sources = _shape_results(data, 8000)
+        assert sources[0].snippet == "Full paragraph-scale passage."
+
+    def test_accepts_snake_case_key(self):
+        data = self._payload(
+            {
+                "snippets": [{"snippet": "keyword fragment"}],
+                "extractive_answers": [{"content": "Paragraph passage."}],
+            }
+        )
+        assert _shape_results(data, 8000)[0].snippet == "Paragraph passage."
+
+    def test_falls_back_to_snippet_when_no_extractive_answers(self):
+        data = self._payload({"snippets": [{"snippet": "<b>snippet</b> text"}]})
+        assert _shape_results(data, 8000)[0].snippet == "snippet text"
+
+    def test_falls_back_when_extractive_answers_missing_content(self):
+        data = self._payload(
+            {
+                "snippets": [{"snippet": "snippet text"}],
+                "extractiveAnswers": [{"nope": 1}],
+            }
+        )
+        assert _shape_results(data, 8000)[0].snippet == "snippet text"
+
+    def test_falls_back_when_extractive_answers_blank_content(self):
+        data = self._payload(
+            {
+                "snippets": [{"snippet": "snippet text"}],
+                "extractiveAnswers": [{"content": "   "}],
+            }
+        )
+        assert _shape_results(data, 8000)[0].snippet == "snippet text"
+
+    def test_skips_blank_answers_uses_first_non_empty(self):
+        data = self._payload(
+            {
+                "extractiveAnswers": [
+                    {"content": ""},
+                    {"content": "<b>real</b> passage."},
+                ]
+            }
+        )
+        assert _shape_results(data, 8000)[0].snippet == "real passage."
+
+    def test_malformed_extractive_answers_never_raises(self):
+        data = self._payload(
+            {
+                "snippets": [{"snippet": "snippet text"}],
+                "extractiveAnswers": {"not": "a list"},
+            }
+        )
+        assert _shape_results(data, 8000)[0].snippet == "snippet text"
+
+    def test_per_source_budget_share(self):
+        # Five paragraph-scale answers of 2000 chars each against an 8000-char
+        # budget: without a per-source share the first sources eat the whole
+        # budget and later sources keep nothing.
+        content = "x" * 2000
+        data = {
+            "results": [
+                {
+                    "document": {
+                        "derivedStructData": {
+                            "title": f"T{i}",
+                            "link": f"L{i}",
+                            "extractiveAnswers": [{"content": content}],
+                        }
+                    }
+                }
+                for i in range(1, 6)
+            ]
+        }
+        sources = _shape_results(data, 8000)
+        assert all(s.snippet for s in sources)
+        assert all(len(s.snippet) == 1600 for s in sources)
