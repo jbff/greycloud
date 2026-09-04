@@ -12,7 +12,7 @@ import time
 import subprocess
 import sys
 import os
-from typing import List, Optional, Dict, Any, AsyncGenerator, Union
+from typing import Callable, List, Optional, Dict, Any, AsyncGenerator, Union
 
 from google import genai
 from google.genai import types
@@ -20,7 +20,12 @@ from google.genai import types
 from .config import GreyCloudConfig
 from .auth import create_client
 from .rate_limiter import VertexRateLimiter
-from .grounding import asearch_sources, build_grounding_context
+from .grounding import (
+    GroundingSource,
+    asearch_sources,
+    build_grounding_context,
+    _ainvoke_grounding_callback,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +258,7 @@ class GreyCloudAsyncClient:
         retry_unquoted: bool = True,
         grounding_query: Optional[str] = None,
         grounding: bool = True,
+        on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
     ) -> List[types.Content]:
         """Return the contents to send, injecting Discovery Engine grounding.
 
@@ -278,6 +284,14 @@ class GreyCloudAsyncClient:
                 still prepends the block to the last user message.
             grounding: When False, suppress grounding entirely for this call
                 (RAG proposal item 2): no search, no injection.
+            on_grounding: Invoked once per generate, after the search decision
+                and before the model call, with the exact source list being
+                injected — or ``[]`` when the search ran but returned nothing
+                (RAG proposal §5). Not invoked when grounding was skipped
+                entirely (``grounding=False``, threshold skip, tools override,
+                inject mode disabled, no user content). Coroutine-function
+                callbacks are awaited; plain functions are called inline.
+                Callback exceptions are logged at WARNING and never propagate.
         """
         if tools is not None:
             # Explicit tools override: honor it as today, no injection.
@@ -319,6 +333,10 @@ class GreyCloudAsyncClient:
         sources = await asearch_sources(
             self.config, query, retry_unquoted=retry_unquoted
         )
+        if on_grounding is not None:
+            # Fire the callback with the decided list — [] included — before
+            # the model call (proposal §5). Callback errors never propagate.
+            await _ainvoke_grounding_callback(on_grounding, sources)
         if not sources:
             # Search failures are logged at WARNING inside asearch_sources; an
             # empty result set is the genuine "no matches" case.
@@ -427,6 +445,7 @@ class GreyCloudAsyncClient:
         retry_unquoted: bool = True,
         grounding_query: Optional[str] = None,
         grounding: bool = True,
+        on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
         **kwargs,
     ) -> types.GenerateContentResponse:
         """Generate content with rate limiting.
@@ -440,6 +459,12 @@ class GreyCloudAsyncClient:
                 (and current behavior preserved) when omitted.
             grounding: When False, skip grounding entirely for this call (no
                 search, no injection). Defaults to True.
+            on_grounding: Optional callback invoked once per generate with the
+                exact list of :class:`greycloud.grounding.GroundingSource`
+                being injected (``[]`` when the search ran but found nothing);
+                not invoked when grounding is skipped entirely. Coroutine
+                callbacks are awaited; callback exceptions are logged at
+                WARNING and never propagate.
         """
         model_name = model or self.config.model
         contents = await self._apply_grounding_async(
@@ -448,6 +473,7 @@ class GreyCloudAsyncClient:
             retry_unquoted=retry_unquoted,
             grounding_query=grounding_query,
             grounding=grounding,
+            on_grounding=on_grounding,
         )
         config = self._build_generate_config(
             system_instruction=system_instruction,
@@ -485,6 +511,7 @@ class GreyCloudAsyncClient:
         retry_unquoted: bool = True,
         grounding_query: Optional[str] = None,
         grounding: bool = True,
+        on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
         **kwargs,
     ) -> AsyncGenerator[Union[str, types.GenerateContentResponse], None]:
         """Generate content (streaming). Yields text chunks or raw response objects. Rate-limited.
@@ -498,6 +525,13 @@ class GreyCloudAsyncClient:
                 (and current behavior preserved) when omitted.
             grounding: When False, skip grounding entirely for this call (no
                 search, no injection). Defaults to True.
+            on_grounding: Optional callback invoked once per generate with the
+                exact list of :class:`greycloud.grounding.GroundingSource`
+                being injected (``[]`` when the search ran but found nothing);
+                not invoked when grounding is skipped entirely. Coroutine
+                callbacks are awaited; callback exceptions are logged at
+                WARNING and never propagate. Fires when the async generator is
+                first advanced.
         """
         model_name = model or self.config.model
         # Async generator: the grounding search + injection run when the
@@ -508,6 +542,7 @@ class GreyCloudAsyncClient:
             retry_unquoted=retry_unquoted,
             grounding_query=grounding_query,
             grounding=grounding,
+            on_grounding=on_grounding,
         )
         config = self._build_generate_config(
             system_instruction=system_instruction,

@@ -75,6 +75,7 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
   - Per-call overrides on `generate_content` / `generate_content_stream` (both clients, and via `generate_with_retry`):
     - `grounding_query="..."` — search this string instead of the verbatim last user message (the last turn is often a workflow instruction, not content); the block is still injected into the last user message.
     - `grounding=False` — skip grounding entirely for this call (no search, no injection).
+    - `on_grounding=callback` — invoked once per generate with the exact list of `GroundingSource` being injected (`[]` when the search ran but found nothing); not invoked when grounding is skipped entirely. Coroutine callbacks are awaited on the async client; callback exceptions are logged at WARNING and never propagate.
   - `min_grounding_query_chars` (default `0`): when > 0, inject-mode grounding skips the search when the effective query is shorter than this many characters.
 
 - **Batch utilities**
@@ -435,6 +436,16 @@ response = client.generate_content(contents, grounding=False)
 ```
 
 For automatic suppression of short conversational turns, set `min_grounding_query_chars` in `GreyCloudConfig` (default `0`, off): when the effective query — `grounding_query` if given, else the last user message — is shorter than the threshold, the search is skipped and generation proceeds ungrounded.
+
+To see exactly which sources informed a response (e.g. to show the clinician the reference material behind a citation), pass `on_grounding`, a callback receiving the list of `GroundingSource` objects that are being injected — fired once per generate, after the search decision and before the model call. It fires with an empty list when the search ran but found nothing, and does not fire when grounding was skipped entirely (`grounding=False`, threshold skip, tools override, or inject mode disabled):
+
+```python
+def show_sources(sources):
+    for s in sources:
+        print(f"[{s.index}] {s.title} — {s.link}")
+
+response = client.generate_content(contents, on_grounding=show_sources)
+```
 
 ### 5.9 Batch Processing with GCS
 

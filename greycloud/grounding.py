@@ -19,7 +19,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import httpx
 import requests
@@ -711,3 +711,53 @@ def _render_block(citation_lines: Sequence[str], snippet_texts: Sequence[str]) -
     lines.append("</grounding_sources>")
     lines.append(_INSTRUCTION)
     return "\n".join(lines)
+
+
+def _invoke_grounding_callback(
+    on_grounding: Callable[[List[GroundingSource]], None],
+    sources: List[GroundingSource],
+) -> None:
+    """Invoke a sync ``on_grounding`` callback, never raising (proposal §5).
+
+    A coroutine-function callback is driven to completion with ``asyncio.run``
+    when no loop is running in this thread. When the sync client is used from
+    inside a running loop, the coroutine is scheduled on that loop instead of
+    being dropped, with failures logged from a done-callback — a scheduled
+    callback exception must not surface as an unretrieved-task warning nor
+    break generation.
+    """
+    try:
+        result = on_grounding(sources)
+        if result is not None and asyncio.iscoroutine(result):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No loop in this thread: drive to completion inline.
+                asyncio.run(result)
+            else:
+
+                def _log_task_failure(task: "asyncio.Task") -> None:
+                    if task.cancelled() or task.exception() is None:
+                        return
+                    logger.warning("on_grounding callback failed: %s", task.exception())
+
+                loop.create_task(result).add_done_callback(_log_task_failure)
+    except Exception as e:  # noqa: BLE001 - callback must never break generation
+        logger.warning("on_grounding callback failed: %s", e)
+
+
+async def _ainvoke_grounding_callback(
+    on_grounding: Callable[[List[GroundingSource]], None],
+    sources: List[GroundingSource],
+) -> None:
+    """Async twin of :func:`_invoke_grounding_callback` (same contract).
+
+    A coroutine-function callback is awaited; a plain function is called
+    synchronously on the event loop. Never raises.
+    """
+    try:
+        result = on_grounding(sources)
+        if result is not None and asyncio.iscoroutine(result):
+            await result
+    except Exception as e:  # noqa: BLE001 - callback must never break generation
+        logger.warning("on_grounding callback failed: %s", e)

@@ -5,13 +5,18 @@ Main GreyCloud client for content generation and interaction
 import logging
 import time
 import random
-from typing import List, Optional, Generator, Dict, Any, Union
+from typing import Callable, List, Optional, Generator, Dict, Any, Union
 from google import genai
 from google.genai import types
 
 from .config import GreyCloudConfig
 from .auth import create_client
-from .grounding import build_grounding_context, search_sources
+from .grounding import (
+    GroundingSource,
+    build_grounding_context,
+    search_sources,
+    _invoke_grounding_callback,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +257,7 @@ class GreyCloudClient:
         retry_unquoted: bool = True,
         grounding_query: Optional[str] = None,
         grounding: bool = True,
+        on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
     ) -> List[types.Content]:
         """Return the contents to send, injecting Discovery Engine grounding.
 
@@ -277,6 +283,13 @@ class GreyCloudClient:
                 prepends the block to the last user message.
             grounding: When False, suppress grounding entirely for this call
                 (RAG proposal item 2): no search, no injection.
+            on_grounding: Invoked once per generate, after the search decision
+                and before the model call, with the exact source list being
+                injected — or ``[]`` when the search ran but returned nothing
+                (RAG proposal §5). Not invoked when grounding was skipped
+                entirely (``grounding=False``, threshold skip, tools override,
+                inject mode disabled, no user content). Callback exceptions
+                are logged at WARNING and never propagate.
         """
         if tools is not None:
             # Explicit tools override: honor it as today, no injection.
@@ -316,6 +329,10 @@ class GreyCloudClient:
             return contents
 
         sources = search_sources(self.config, query, retry_unquoted=retry_unquoted)
+        if on_grounding is not None:
+            # Fire the callback with the decided list — [] included — before
+            # the model call (proposal §5). Callback errors never propagate.
+            _invoke_grounding_callback(on_grounding, sources)
         if not sources:
             # Search failures are logged at WARNING inside search_sources; an
             # empty result set is the genuine "no matches" case.
@@ -442,6 +459,7 @@ class GreyCloudClient:
         retry_unquoted: bool = True,
         grounding_query: Optional[str] = None,
         grounding: bool = True,
+        on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
         **kwargs,
     ) -> types.GenerateContentResponse:
         """
@@ -466,6 +484,11 @@ class GreyCloudClient:
                 (and current behavior preserved) when omitted.
             grounding: When False, skip grounding entirely for this call (no
                 search, no injection). Defaults to True.
+            on_grounding: Optional callback invoked once per generate with the
+                exact list of :class:`greycloud.grounding.GroundingSource`
+                being injected (``[]`` when the search ran but found nothing);
+                not invoked when grounding is skipped entirely. Callback
+                exceptions are logged at WARNING and never propagate.
             **kwargs: Additional parameters for GenerateContentConfig
 
         Returns:
@@ -478,6 +501,7 @@ class GreyCloudClient:
             retry_unquoted=retry_unquoted,
             grounding_query=grounding_query,
             grounding=grounding,
+            on_grounding=on_grounding,
         )
         config = self._build_generate_config(
             system_instruction=system_instruction,
@@ -511,6 +535,7 @@ class GreyCloudClient:
         retry_unquoted: bool = True,
         grounding_query: Optional[str] = None,
         grounding: bool = True,
+        on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
         **kwargs,
     ) -> Generator[Union[str, types.GenerateContentResponse], None, None]:
         """
@@ -536,6 +561,12 @@ class GreyCloudClient:
                 (and current behavior preserved) when omitted.
             grounding: When False, skip grounding entirely for this call (no
                 search, no injection). Defaults to True.
+            on_grounding: Optional callback invoked once per generate with the
+                exact list of :class:`greycloud.grounding.GroundingSource`
+                being injected (``[]`` when the search ran but found nothing);
+                not invoked when grounding is skipped entirely. Callback
+                exceptions are logged at WARNING and never propagate. Fires
+                when the generator is first advanced.
             **kwargs: Additional parameters for GenerateContentConfig
 
         Yields:
@@ -550,6 +581,7 @@ class GreyCloudClient:
             retry_unquoted=retry_unquoted,
             grounding_query=grounding_query,
             grounding=grounding,
+            on_grounding=on_grounding,
         )
         config = self._build_generate_config(
             system_instruction=system_instruction,

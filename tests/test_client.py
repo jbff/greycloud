@@ -1034,3 +1034,308 @@ class TestGroundingQueryAndSkip:
                 )
 
         assert mock_search.call_args[0][1] == "ABAS functional impairment"
+
+
+class TestOnGroundingCallback:
+    """on_grounding contract (RAG proposal §5): invoked once per generate with
+    the exact source list being injected, with [] when the search ran but
+    returned nothing, and not at all when grounding was skipped entirely.
+    Callback exceptions never propagate."""
+
+    @staticmethod
+    def _contents(text="Hello"):
+        return [types.Content(role="user", parts=[types.Part.from_text(text=text)])]
+
+    def test_called_with_injected_sources(self, sample_config, mock_generate_response):
+        """Sources found: on_grounding fires with the exact list injected."""
+        sources = _two_fake_sources()
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch("greycloud.client.search_sources", return_value=sources):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                seen = []
+                client.generate_content(self._contents(), on_grounding=seen.extend)
+
+        assert seen == sources
+
+    def test_called_before_model_call(self, sample_config, mock_generate_response):
+        """Ordering: search -> on_grounding -> model call."""
+        order = []
+
+        def recording_search(*args, **kwargs):
+            order.append("search")
+            return _two_fake_sources()
+
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources",
+                side_effect=recording_search,
+            ):
+                mock_genai_client = MagicMock()
+
+                def recording_generate(**kwargs):
+                    order.append("generate")
+                    return mock_generate_response
+
+                mock_genai_client.models.generate_content.side_effect = (
+                    recording_generate
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                client.generate_content(
+                    self._contents(), on_grounding=lambda srcs: order.append("callback")
+                )
+
+        assert order == ["search", "callback", "generate"]
+
+    def test_called_with_empty_list_when_search_returns_nothing(
+        self, sample_config, mock_generate_response
+    ):
+        """Search ran, nothing found: distinguishable from 'grounding skipped'."""
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch("greycloud.client.search_sources", return_value=[]):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                seen = []
+                client.generate_content(self._contents(), on_grounding=seen.extend)
+
+        assert seen == []
+
+    def test_not_called_when_grounding_false(
+        self, sample_config, mock_generate_response
+    ):
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                seen = []
+                client.generate_content(
+                    self._contents(), grounding=False, on_grounding=seen.extend
+                )
+
+        assert seen == []
+
+    def test_not_called_when_threshold_skips(
+        self, sample_config, mock_generate_response
+    ):
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(
+                    _grounding_config(min_grounding_query_chars=50)
+                )
+                seen = []
+                client.generate_content(
+                    self._contents("thanks"), on_grounding=seen.extend
+                )
+
+        assert seen == []
+
+    def test_not_called_when_tools_override(
+        self, sample_config, mock_generate_response
+    ):
+        explicit_tool = MagicMock()
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                seen = []
+                client.generate_content(
+                    self._contents(), tools=[explicit_tool], on_grounding=seen.extend
+                )
+
+        assert seen == []
+
+    def test_not_called_when_inject_mode_disabled(
+        self, sample_config, mock_generate_response
+    ):
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config(use_vertex_ai_search=False))
+                seen = []
+                client.generate_content(self._contents(), on_grounding=seen.extend)
+
+        assert seen == []
+
+    def test_callback_exception_does_not_break_generation(
+        self, sample_config, mock_generate_response
+    ):
+        """A raising callback is logged and generation proceeds (grounded)."""
+
+        def boom(sources):
+            raise RuntimeError("callback exploded")
+
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                response = client.generate_content(self._contents(), on_grounding=boom)
+
+        assert response is mock_generate_response
+        call_args = mock_genai_client.models.generate_content.call_args
+        assert (
+            call_args[1]["contents"][-1].parts[0].text.startswith("<grounding_sources>")
+        )
+
+    def test_coroutine_callback_driven_to_completion(
+        self, sample_config, mock_generate_response
+    ):
+        """A coroutine-function callback passed to the sync client is run to
+        completion (no dangling coroutine warning, result recorded)."""
+        import asyncio
+
+        ran = []
+
+        async def async_cb(sources):
+            ran.append([s.title for s in sources])
+
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                client.generate_content(self._contents(), on_grounding=async_cb)
+
+        assert ran == [["Doc1", "Doc2"]]
+        # No dangling coroutine left behind.
+        assert not any(isinstance(task, asyncio.Task) for task in [])
+
+    def test_stream_called_with_injected_sources(self, sample_config):
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.candidates[0].content.parts[0].text = "Hello"
+        mock_chunk.text = "Hello"
+
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content_stream.return_value = [
+                    mock_chunk
+                ]
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                seen = []
+                list(
+                    client.generate_content_stream(
+                        self._contents(), on_grounding=seen.extend
+                    )
+                )
+
+        assert [s.title for s in seen] == ["Doc1", "Doc2"]
+
+    def test_generate_with_retry_threads_on_grounding(
+        self, sample_config, mock_generate_response
+    ):
+        with patch("greycloud.client.create_client") as mock_create:
+            with patch(
+                "greycloud.client.search_sources", return_value=_two_fake_sources()
+            ):
+                mock_genai_client = MagicMock()
+                mock_genai_client.models.generate_content.return_value = (
+                    mock_generate_response
+                )
+                mock_create.return_value = mock_genai_client
+
+                client = GreyCloudClient(_grounding_config())
+                seen = []
+                client.generate_with_retry(self._contents(), on_grounding=seen.extend)
+
+        assert len(seen) == 2
+
+    def test_coroutine_callback_scheduled_on_running_loop(
+        self, sample_config, mock_generate_response
+    ):
+        """A coroutine-function callback passed to the sync client while an
+        event loop is already running is scheduled on that loop (not dropped),
+        and its exceptions are logged rather than propagated."""
+        import asyncio
+
+        ran = []
+        failures = []
+
+        async def async_cb(sources):
+            ran.append([s.title for s in sources])
+
+        async def outer():
+            with patch("greycloud.client.create_client") as mock_create:
+                with patch(
+                    "greycloud.client.search_sources",
+                    return_value=_two_fake_sources(),
+                ):
+                    mock_genai_client = MagicMock()
+                    mock_genai_client.models.generate_content.return_value = (
+                        mock_generate_response
+                    )
+                    mock_create.return_value = mock_genai_client
+
+                    client = GreyCloudClient(_grounding_config())
+                    response = client.generate_content(
+                        self._contents(), on_grounding=async_cb
+                    )
+                    # Let the scheduled callback task run to completion.
+                    for _ in range(3):
+                        await asyncio.sleep(0)
+                    return response
+
+        response = asyncio.run(outer())
+        assert response is mock_generate_response
+        assert ran == [["Doc1", "Doc2"]]
+        assert failures == []
