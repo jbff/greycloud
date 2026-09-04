@@ -57,6 +57,9 @@ mypy greycloud/
 ### Versioning & Git Workflow
 The single invariant this workflow protects: **a `v<version>` tag exists on exactly the commit that was published to PyPI as that version.** Every published version has one tag, on a commit whose tree says that version; no tag ever points at a commit that was never published.
 
+#### Single-writer rule (hard requirement)
+**Never execute — or mutate the state of — a release while any other session, fork, or thread may be working on the same one.** Signs you are racing: new commits appearing under you between checks, a `git status` that is clean but different from what you last saw, tags or version fields you did not change. On any of these: **stop immediately**, make no further commits, pushes, tag deletions, or publishes, and surface the conflict to the maintainer to pick one owner. Reconciling two agents' contradictory release decisions by acting first is prohibited — a release is not a race to win. Releasing requires explicit user authorization in the thread that does it.
+
 #### Tag lifecycle rule
 - **A tag is immutable only after its version is published to PyPI.** Until the version exists on PyPI, its tag may be deleted or moved freely (it protects nothing — no consumer exists). Once the version is published, the tag is permanent.
 - **Never tag a post-release bump commit.** Bumping the version reserves nothing; the next release's tag is created when that release actually ships. Tagging a bump burns the version and creates permanent version-number holes (this happened to 0.3.13, which was tagged but never published).
