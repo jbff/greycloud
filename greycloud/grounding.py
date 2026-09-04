@@ -300,19 +300,62 @@ def _search_url(datastore_path: str) -> str:
     return f"{endpoint}/v1/{datastore_path}/servingConfigs/default_search:search"
 
 
-def _search_payload(query: str, page_size: int) -> dict:
+def _search_payload(
+    query: str, page_size: int, extractive_content_spec: bool = False
+) -> dict:
+    """Build the Discovery Engine ``:search`` request body.
+
+    The snippets-only ``contentSearchSpec`` is the default: it is accepted by
+    every datastore type. ``extractive_content_spec=True`` additionally
+    requests paragraph-scale extractive answers — quote-ready text rather than
+    1-3 sentence keyword fragments — but datastores created with chunking
+    config reject the field with HTTP 400, so which content types the
+    datastore supports is the caller's knowledge to opt into, never a
+    library-side default (0.3.14 sent it unconditionally and broke every
+    chunked datastore).
+    """
+    content_search_spec: dict = {"snippetSpec": {"returnSnippet": True}}
+    if extractive_content_spec:
+        content_search_spec["extractiveContentSpec"] = {
+            "maxExtractiveAnswerCount": 2,
+        }
     return {
         "query": query,
         "pageSize": max(1, page_size),
-        # Extractive answers return paragraph-scale passages extracted around
-        # the query — quote-ready text rather than 1-3 sentence keyword
-        # fragments (RAG proposal item 4). Additive in the :search request:
-        # stores that return no answers degrade to the snippet behavior.
-        "contentSearchSpec": {
-            "snippetSpec": {"returnSnippet": True},
-            "extractiveContentSpec": {"maxExtractiveAnswerCount": 2},
-        },
+        "contentSearchSpec": content_search_spec,
     }
+
+
+def _log_search_http_error(prefix: str, response, extractive_requested: bool) -> None:
+    """Log a non-2xx ``:search`` response at the appropriate level.
+
+    A 400 whose body blames ``max_extractive_answer_count`` while the caller
+    asked for the extractive spec means the datastore uses chunking config:
+    log at ERROR with the disable hint (never silently retry into a
+    different mode — the caller asked for extractive, so the failure must be
+    loud, not downgraded). Every other non-2xx logs the standard WARNING.
+    """
+    body = response.text[:300]
+    if (
+        response.status_code == 400
+        and extractive_requested
+        and "max_extractive_answer_count" in body
+    ):
+        logger.error(
+            "%s: Discovery Engine search failed with HTTP 400: %s — the datastore "
+            "likely uses 'chunking config', which rejects extractiveContentSpec; "
+            "set GreyCloudConfig.extractive_content_spec=False (the default) to "
+            "search this datastore",
+            prefix,
+            body,
+        )
+    else:
+        logger.warning(
+            "%s: Discovery Engine search failed with HTTP %s: %s",
+            prefix,
+            response.status_code,
+            body,
+        )
 
 
 def _normalize_query(query: str) -> str:
@@ -407,7 +450,13 @@ def _search_sources_once(
     for attempt in range(_MAX_ATTEMPTS):
         try:
             url = _search_url(datastore)
-            payload = _search_payload(query, page_size)
+            payload = _search_payload(
+                query,
+                page_size,
+                extractive_content_spec=getattr(
+                    config, "extractive_content_spec", False
+                ),
+            )
             response = requests.post(
                 url, json=payload, headers=headers, timeout=timeout
             )
@@ -424,10 +473,12 @@ def _search_sources_once(
                     time.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
                 continue
             if response.status_code < 200 or response.status_code >= 300:
-                logger.warning(
-                    "search_sources: Discovery Engine search failed with HTTP %s: %s",
-                    response.status_code,
-                    response.text[:300],
+                _log_search_http_error(
+                    "search_sources",
+                    response,
+                    extractive_requested=getattr(
+                        config, "extractive_content_spec", False
+                    ),
                 )
                 return [], False
             try:
@@ -544,7 +595,13 @@ async def _asearch_sources_once(
     for attempt in range(_MAX_ATTEMPTS):
         try:
             url = _search_url(datastore)
-            payload = _search_payload(query, page_size)
+            payload = _search_payload(
+                query,
+                page_size,
+                extractive_content_spec=getattr(
+                    config, "extractive_content_spec", False
+                ),
+            )
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, json=payload, headers=headers)
             if response.status_code >= 500 or response.status_code == 429:
@@ -560,10 +617,12 @@ async def _asearch_sources_once(
                     await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
                 continue
             if response.status_code < 200 or response.status_code >= 300:
-                logger.warning(
-                    "asearch_sources: Discovery Engine search failed with HTTP %s: %s",
-                    response.status_code,
-                    response.text[:300],
+                _log_search_http_error(
+                    "asearch_sources",
+                    response,
+                    extractive_requested=getattr(
+                        config, "extractive_content_spec", False
+                    ),
                 )
                 return [], False
             try:

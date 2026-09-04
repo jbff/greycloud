@@ -73,6 +73,14 @@ class GreyCloudConfig:
     # shorter than this many characters. 0 (default) preserves current
     # behavior — conversational turns like "thanks" then still trigger a search.
     min_grounding_query_chars: int = 0
+    # Opt-in extractive answers (RAG proposal item 4): when True, the
+    # :search request includes extractiveContentSpec to get paragraph-scale
+    # passages. False (default) sends the snippets-only payload, which every
+    # datastore type accepts — datastores built with chunking config reject
+    # extractiveContentSpec with HTTP 400, so this is the caller's opt-in,
+    # not a library default (0.3.14 sent it unconditionally and broke every
+    # chunked datastore).
+    extractive_content_spec: bool = False
 
     # Thinking config
     # When None, no thinking config is sent. Set to "LOW", "MEDIUM", or "HIGH"

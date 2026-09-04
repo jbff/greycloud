@@ -879,12 +879,13 @@ class TestInstructionLine:
 
 
 class TestSearchPayloadSpec:
-    """RAG proposal item 4: request paragraph-scale extractive answers
-    alongside the keyword snippets (snippets kept as fallback)."""
+    """Caller-controlled content spec: extractiveContentSpec is opt-in via
+    GreyCloudConfig.extractive_content_spec (chunking-config datastores
+    reject the field with HTTP 400, so snippets-only must be the default)."""
 
-    def test_payload_requests_extractive_answers_alongside_snippets(
-        self, grounding_config
-    ):
+    def test_default_payload_is_snippets_only(self, grounding_config):
+        """Default (extractive_content_spec=False): the pre-0.3.14 wire
+        payload, accepted by every datastore type."""
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch(
                 "greycloud.grounding.requests.post",
@@ -892,8 +893,134 @@ class TestSearchPayloadSpec:
             ) as mock_post:
                 search_sources(grounding_config, "q")
         spec = mock_post.call_args[1]["json"]["contentSearchSpec"]
+        assert spec == {"snippetSpec": {"returnSnippet": True}}
+        assert "extractiveContentSpec" not in spec
+
+    def test_extractive_content_spec_true_includes_spec(self):
+        config = GreyCloudConfig(
+            project_id="test-project-id",
+            location="us-east4",
+            vertex_ai_search_datastore=DATASTORE,
+            extractive_content_spec=True,
+        )
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": []}),
+            ) as mock_post:
+                search_sources(config, "q")
+        spec = mock_post.call_args[1]["json"]["contentSearchSpec"]
         assert spec["snippetSpec"] == {"returnSnippet": True}
         assert spec["extractiveContentSpec"] == {"maxExtractiveAnswerCount": 2}
+
+    def test_snippet_fallback_end_to_end_with_flag_on(self):
+        """Read side is a no-op when the response carries no extractive
+        answers: snippets are used under either flag value."""
+        config = GreyCloudConfig(
+            project_id="test-project-id",
+            location="us-east4",
+            vertex_ai_search_datastore=DATASTORE,
+            extractive_content_spec=True,
+        )
+        payload = {
+            "results": [
+                {
+                    "document": {
+                        "derivedStructData": {
+                            "title": "T",
+                            "link": "L",
+                            "snippets": [{"snippet": "snippet-only passage"}],
+                        }
+                    }
+                }
+            ]
+        }
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, payload),
+            ):
+                sources = search_sources(config, "q")
+        assert sources[0].snippet == "snippet-only passage"
+
+
+class TestChunkingConfigRejection:
+    """Chunking-config datastores reject extractiveContentSpec with HTTP 400
+    mentioning max_extractive_answer_count. With the flag on the failure must
+    be loud (ERROR with a hint), never silently downgraded or retried."""
+
+    @staticmethod
+    def _bad_request_response():
+        return FakeResponse(
+            400,
+            {"error": {"code": 400}},
+            text=(
+                '{"error": {"code": 400, "message": "max_extractive_answer_count '
+                "must be not specified when the datastore is using 'chunking "
+                "config'\"}}"
+            ),
+        )
+
+    def test_400_with_flag_on_logs_error_with_hint(self, grounding_config, caplog):
+        config = GreyCloudConfig(
+            project_id="test-project-id",
+            location="us-east4",
+            vertex_ai_search_datastore=DATASTORE,
+            extractive_content_spec=True,
+        )
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=self._bad_request_response(),
+            ) as mock_post:
+                with caplog.at_level("DEBUG", logger="greycloud.grounding"):
+                    sources = search_sources(config, "q")
+        assert sources == []
+        assert mock_post.call_count == 1  # 400 is not retried
+        errors = [
+            r
+            for r in caplog.records
+            if r.levelname == "ERROR" and "chunking config" in r.message
+        ]
+        assert errors, "expected an ERROR log naming chunking config"
+        assert "extractive_content_spec" in errors[0].message
+
+    def test_400_with_flag_off_does_not_log_hint(self, grounding_config, caplog):
+        """Defensive: without the flag the standard warning applies (the
+        request cannot actually carry extractiveContentSpec)."""
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=self._bad_request_response(),
+            ):
+                with caplog.at_level("DEBUG", logger="greycloud.grounding"):
+                    sources = search_sources(grounding_config, "q")
+        assert sources == []
+        assert not any(
+            r.levelname == "ERROR" and "chunking config" in r.message
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_async_400_with_flag_on_logs_error_with_hint(self, caplog):
+        config = GreyCloudConfig(
+            project_id="test-project-id",
+            location="us-east4",
+            vertex_ai_search_datastore=DATASTORE,
+            extractive_content_spec=True,
+        )
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch_async_client(self._bad_request_response()):
+                with caplog.at_level("DEBUG", logger="greycloud.grounding"):
+                    sources = await asearch_sources(config, "q")
+        assert sources == []
+        errors = [
+            r
+            for r in caplog.records
+            if r.levelname == "ERROR" and "chunking config" in r.message
+        ]
+        assert errors, "expected an ERROR log naming chunking config"
+        assert "extractive_content_spec" in errors[0].message
 
 
 class TestShapeResults:

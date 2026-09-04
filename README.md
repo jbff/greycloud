@@ -77,6 +77,7 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
     - `grounding=False` — skip grounding entirely for this call (no search, no injection).
     - `on_grounding=callback` — invoked once per generate with the exact list of `GroundingSource` being injected (`[]` when the search ran but found nothing); not invoked when grounding is skipped entirely. Coroutine callbacks are awaited on the async client; callback exceptions are logged at WARNING and never propagate.
   - `min_grounding_query_chars` (default `0`): when > 0, inject-mode grounding skips the search when the effective query is shorter than this many characters.
+  - `extractive_content_spec` (default `False`): when `True`, the `:search` request additionally asks for paragraph-scale extractive answers (`extractiveContentSpec: {maxExtractiveAnswerCount: 2}`); results prefer an extractive answer per source, falling back to the keyword snippet. **Opt-in** — datastores created with chunking config reject the field with HTTP 400, so the snippets-only default (accepted by every datastore type) is what 0.3.16+ sends unless you know your datastore supports extractive answers. If a chunking-config datastore rejects the request, the failure is logged at ERROR with a hint to disable the flag.
 
 - **Batch utilities**
   - `GreyCloudBatch` wraps the more verbose raw batch APIs:
@@ -436,6 +437,8 @@ response = client.generate_content(contents, grounding=False)
 ```
 
 For automatic suppression of short conversational turns, set `min_grounding_query_chars` in `GreyCloudConfig` (default `0`, off): when the effective query — `grounding_query` if given, else the last user message — is shorter than the threshold, the search is skipped and generation proceeds ungrounded.
+
+**Changelog note (0.3.16):** 0.3.14 requested paragraph-scale extractive answers unconditionally, which broke search for any datastore built with *chunking config* (HTTP 400: `max_extractive_answer_count must be not specified when the datastore is using 'chunking config'`). From 0.3.16 the extractive spec is opt-in via `extractive_content_spec=True` and the snippets-only payload (the pre-0.3.14 wire behavior, accepted by every datastore type) is the default. Callers on chunked datastores need no action; callers wanting extractive answers set `extractive_content_spec=True` in `GreyCloudConfig`.
 
 To see exactly which sources informed a response (e.g. to show the clinician the reference material behind a citation), pass `on_grounding`, a callback receiving the list of `GroundingSource` objects that are being injected — fired once per generate, after the search decision and before the model call. It fires with an empty list when the search ran but found nothing, and does not fire when grounding was skipped entirely (`grounding=False`, threshold skip, tools override, or inject mode disabled):
 

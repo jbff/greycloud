@@ -289,3 +289,25 @@ class TestGreyCloudConfig:
             mock_run.return_value.returncode = 0
             with pytest.raises(ValueError, match="min_grounding_query_chars"):
                 GreyCloudConfig(project_id="test-project", min_grounding_query_chars=-1)
+
+    def test_config_extractive_content_spec_default_off(self):
+        """extractive_content_spec defaults to False (snippets-only, the wire
+        behavior accepted by every datastore type)"""
+        import subprocess
+
+        with patch.object(subprocess, "run") as mock_run:
+            mock_run.return_value.returncode = 0
+            config = GreyCloudConfig(project_id="test-project")
+
+            assert config.extractive_content_spec is False
+
+    def test_config_extractive_content_spec_opt_in(self):
+        import subprocess
+
+        with patch.object(subprocess, "run") as mock_run:
+            mock_run.return_value.returncode = 0
+            config = GreyCloudConfig(
+                project_id="test-project", extractive_content_spec=True
+            )
+
+            assert config.extractive_content_spec is True
