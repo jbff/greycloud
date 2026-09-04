@@ -55,52 +55,52 @@ mypy greycloud/
 ---
 
 ### Versioning & Git Workflow
-This project enforces **strict tag immutability**. Release version tags must never be moved or reused.
+The single invariant this workflow protects: **a `v<version>` tag exists on exactly the commit that was published to PyPI as that version.** Every published version has one tag, on a commit whose tree says that version; no tag ever points at a commit that was never published.
 
-#### Commit & Tag Strategy
-- **Tag Matching:** For every release, a Git tag formatted as `v<version>` (matching the exact version string in `greycloud/__init__.py`) must be created on the release commit.
-- **No Floating Tags:** Floating tags are strictly prohibited. Once a tag is created and pushed, it is permanent. If changes are needed after a version tag is created, you **must** bump the version in all required files, commit the bump, and tag the new commit.
-- **Automatic Push:** Immediately after committing and tagging, push both the branch and the new tags to the remote:
-  `git push origin <branch> --tags`
+#### Tag lifecycle rule
+- **A tag is immutable only after its version is published to PyPI.** Until the version exists on PyPI, its tag may be deleted or moved freely (it protects nothing — no consumer exists). Once the version is published, the tag is permanent.
+- **Never tag a post-release bump commit.** Bumping the version reserves nothing; the next release's tag is created when that release actually ships. Tagging a bump burns the version and creates permanent version-number holes (this happened to 0.3.13, which was tagged but never published).
+- If a `v<version>` tag already exists but that version was never published (e.g. left over from the old tag-the-bump workflow), delete it locally and remotely (`git tag -d v<version> && git push origin :refs/tags/v<version>`) and tag the release commit instead. This is a workflow correction, not a floating tag.
 
-#### Publishing to PyPI
+#### Where the version number lives between releases
+- After each publish, the tree version is bumped to the next patch and committed **untagged**. Master between releases therefore says the *next* intended version while PyPI's latest is one behind — that is correct and expected.
+- All three version locations must always match: `greycloud/__init__.py`, `pyproject.toml`, `tests/test_init.py`.
+
+#### Publishing to PyPI (when explicitly requested)
+1. Ensure version matches in all three files: `greycloud/__init__.py`, `pyproject.toml`, `tests/test_init.py`
+2. Run `pytest` — all tests must pass
+3. Commit any pending changes (code, docs, tests)
+4. If `v<version>` already exists and the version is **not** on PyPI: delete the tag locally and remotely, then re-tag the release commit
+5. Tag the release commit: `git tag v<version>`
+6. Build and publish from the tagged commit:
+   ```bash
+   rm -rf dist/
+   uv build
+   UV_PUBLISH_TOKEN="$(python3 -c "import configparser; c=configparser.ConfigParser(); c.read('$HOME/.pypirc'); print(c['pypi']['password'])")" uv publish
+   ```
+7. **Verify on PyPI:** `curl -s https://pypi.org/pypi/greycloud/json | python3 -c "import json,sys; print(json.load(sys.stdin)['info']['version'])"` must print the released version
+8. Bump patch version in all three files, commit, push — **no tag**
+9. Push everything: `git push origin <branch> --tags`
+
+**If you build before committing and tagging, the PyPI artifact won't match the git tag source.**
 
 > **Version history note:** Versions 0.3.0 through 0.3.3 were published with
 > mismatched version numbers, broken tags, or other release hygiene issues
 > caused by automated tooling errors. **0.3.4 was the first coherent release
-> in the 0.3.x series.**
-> 
-> We also completely messed up the versioning and tagging consistency on version 0.3.6 by attempting to use a flawed "floating tag" strategy. This caused the built package's internal code to mismatchedly remain at version 0.3.5 while the package name and Git tag were marked as 0.3.6. We are deeply sorry and apologize profusely for our absolute incompetence and repeated release hygiene failures. We have now permanently removed the floating tags rule, and going forward we will strictly enforce version bumping for all new commits. Please use 0.3.7+.
-
-- **Trigger:** Only publish to PyPI when explicitly requested.
-- **Token:** PyPI API token lives in `~/.pypirc`. Pass it via `UV_PUBLISH_TOKEN` env var or let `uv` read `~/.pypirc` directly.
-- **Critical order — commit and tag BEFORE building:**
-  1. Ensure version matches in all three files: `greycloud/__init__.py`, `pyproject.toml`, `tests/test_init.py`
-  2. Run `pytest` — all tests must pass
-  3. Commit the release version
-  4. Tag that commit: `git tag v<version>`
-  5. Build and publish from the tagged commit:
-     ```bash
-     rm -rf dist/
-     uv build
-     UV_PUBLISH_TOKEN="$(python3 -c "import configparser; c=configparser.ConfigParser(); c.read('$HOME/.pypirc'); print(c['pypi']['password'])")" uv publish
-     ```
-  6. **Then** bump patch version (e.g. 0.3.7 → 0.3.8) in all three files
-  7. Commit and tag the bump
-  8. Push: `git push origin <branch> --tags`
-
-  **If you build before committing, the PyPI artifact won't match the git tag source.**
-
-- **Post-Publish Bump:** Increment patch version in `greycloud/__init__.py`, `pyproject.toml`, **and** `tests/test_init.py`. All three must always match.
+> in the 0.3.x series.** 0.3.6 additionally failed under an old "floating tag"
+> strategy, since removed.
+>
+> **0.3.13 / 0.3.15 note:** the old workflow tagged post-release bump commits,
+> consuming version numbers that were never published (0.3.13 was skipped
+> entirely; 0.3.15's tag was deleted and re-created on its actual release
+> commit under the current workflow). The tag-lifecycle rule above exists to
+> prevent this class of hole.
 
 #### Execution Summary for Agents
-1. Make code changes.
-2. Update version in `__init__.py`, `pyproject.toml`, and `tests/test_init.py` (all three must match).
-3. Run `pytest` — must pass.
-4. Commit changes.
-5. Tag: `git tag v<version>`.
-6. If publishing: `rm -rf dist/ && uv build && uv publish`, then bump version in all three files, commit, tag.
-7. Push: `git push origin <branch> --tags`.
+1. Make code changes (tests first).
+2. Run `pytest` — must pass.
+3. Commit changes.
+4. When publishing: verify version consistency in all three files, tag `v<version>`, `rm -rf dist/ && uv build && uv publish`, verify on PyPI, bump to next patch in all three files, commit **untagged**, push branch and tags.
 
 ---
 
