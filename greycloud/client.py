@@ -270,23 +270,24 @@ class GreyCloudClient:
         The caller's ``contents`` list and Content objects are never mutated:
         on injection a shallow-copied list with a copied last user message
         (grounding block prepended as a text part) is returned. A failed or
-        empty search degrades to ungrounded generation (``search_sources`` logs
-        a WARNING on failure and never raises).
+        empty search degrades to ungrounded generation (``search_sources``
+        logs the failure and never raises: WARNING for ordinary failures,
+        ERROR for the chunking-config 400 when extractive_content_spec is on).
 
         Args:
             retry_unquoted: Passed through to :func:`search_sources`; see its
                 docstring for the quoted-query fallback behavior.
             grounding_query: When a non-blank string, used verbatim as the
                 Discovery Engine query instead of the last user message's text
-                (RAG proposal item 1: the last user turn is often a workflow
-                instruction, not searchable content). The injection still
+                (the last user turn is often a workflow instruction, not
+                searchable content). The injection still
                 prepends the block to the last user message.
-            grounding: When False, suppress grounding entirely for this call
-                (RAG proposal item 2): no search, no injection.
+            grounding: When False, suppress grounding entirely for this call:
+                no search, no injection.
             on_grounding: Invoked once per generate, after the search decision
                 and before the model call, with the exact source list being
-                injected — or ``[]`` when the search ran but returned nothing
-                (RAG proposal §5). Not invoked when grounding was skipped
+                injected — or ``[]`` when the search ran but returned nothing.
+                Not invoked when grounding was skipped
                 entirely (``grounding=False``, threshold skip, tools override,
                 inject mode disabled, no user content). Callback exceptions
                 are logged at WARNING and never propagate.

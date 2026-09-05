@@ -11,7 +11,6 @@ class TestGreyCloudConfig:
 
     def test_config_from_environment(self):
         """Test config creation from environment variables"""
-        import subprocess
 
         with patch.dict(
             os.environ,
@@ -23,57 +22,48 @@ class TestGreyCloudConfig:
                 "API_KEY_FILE": "env_api_key.txt",
             },
         ):
-            with patch.object(subprocess, "run") as mock_run:
-                mock_run.return_value.returncode = 0
-                config = GreyCloudConfig()
+            config = GreyCloudConfig()
 
-                assert config.project_id == "env-project-id"
-                assert config.location == "us-west1"
-                assert config.sa_email == "env-sa@project.iam.gserviceaccount.com"
-                assert config.use_api_key is True
-                assert config.api_key_file == "env_api_key.txt"
+            assert config.project_id == "env-project-id"
+            assert config.location == "us-west1"
+            assert config.sa_email == "env-sa@project.iam.gserviceaccount.com"
+            assert config.use_api_key is True
+            assert config.api_key_file == "env_api_key.txt"
 
     def test_config_explicit_values(self):
         """Test config with explicit values"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(
-                project_id="explicit-project",
-                location="us-central1",
-                model="gemini-2.0",
-                temperature=0.5,
-                top_p=0.8,
-                max_output_tokens=1000,
-            )
+        config = GreyCloudConfig(
+            project_id="explicit-project",
+            location="us-central1",
+            model="gemini-2.0",
+            temperature=0.5,
+            top_p=0.8,
+            max_output_tokens=1000,
+        )
 
-            assert config.project_id == "explicit-project"
-            assert config.location == "us-central1"
-            assert config.model == "gemini-2.0"
-            assert config.temperature == 0.5
-            assert config.top_p == 0.8
-            assert config.max_output_tokens == 1000
+        assert config.project_id == "explicit-project"
+        assert config.location == "us-central1"
+        assert config.model == "gemini-2.0"
+        assert config.temperature == 0.5
+        assert config.top_p == 0.8
+        assert config.max_output_tokens == 1000
 
     def test_config_defaults(self):
         """Test config default values"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            mock_run.return_value.stdout = "test-project"
-            config = GreyCloudConfig(project_id="test-project")
+        config = GreyCloudConfig(project_id="test-project")
 
-            # Defaults
-            assert config.model == "gemini-3-flash-preview"
-            assert config.temperature == 1.0
-            assert config.top_p == 0.95
-            assert config.max_output_tokens == 65535
-            # Seed defaults to None (no fixed seed)
-            assert config.seed is None
-            assert config.auto_reauth is True
-            assert config.batch_location == "global"
-            assert config.batch_poll_interval == 30
+        # Defaults
+        assert config.model == "gemini-3-flash-preview"
+        assert config.temperature == 1.0
+        assert config.top_p == 0.95
+        assert config.max_output_tokens == 65535
+        # Seed defaults to None (no fixed seed)
+        assert config.seed is None
+        assert config.auto_reauth is True
+        assert config.batch_location == "global"
+        assert config.batch_poll_interval == 30
 
     def test_config_project_id_from_gcloud(self):
         """Test getting project_id from gcloud config"""
@@ -101,18 +91,14 @@ class TestGreyCloudConfig:
 
     def test_config_safety_settings_default(self):
         """Default safety settings should defer to Vertex defaults (None)"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(project_id="test-project")
+        config = GreyCloudConfig(project_id="test-project")
 
-            # When not provided, we leave safety_settings as None so Vertex uses its defaults.
-            assert config.safety_settings is None
+        # When not provided, we leave safety_settings as None so Vertex uses its defaults.
+        assert config.safety_settings is None
 
     def test_config_custom_safety_settings(self):
         """Test custom safety settings"""
-        import subprocess
 
         custom_settings = [
             {
@@ -121,65 +107,48 @@ class TestGreyCloudConfig:
             }
         ]
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(
-                project_id="test-project", safety_settings=custom_settings
-            )
+        config = GreyCloudConfig(
+            project_id="test-project", safety_settings=custom_settings
+        )
 
-            assert config.safety_settings == custom_settings
+        assert config.safety_settings == custom_settings
 
     def test_config_batch_bucket_from_env(self):
         """Test batch bucket configured from environment"""
-        import subprocess
 
         with patch.dict(os.environ, {"BATCH_GCS_BUCKET": "env-batch-bucket"}):
-            with patch.object(subprocess, "run") as mock_run:
-                mock_run.return_value.returncode = 0
-                config = GreyCloudConfig(project_id="test-project")
-
+            config = GreyCloudConfig(project_id="test-project")
             assert config.batch_gcs_bucket == "env-batch-bucket"
             # gcs_bucket is independent and defaults to None unless explicitly set
             assert config.gcs_bucket is None
 
     def test_config_custom_batch_bucket(self):
         """Test custom batch bucket name"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(
-                project_id="test-project", batch_gcs_bucket="custom-batch-bucket"
-            )
+        config = GreyCloudConfig(
+            project_id="test-project", batch_gcs_bucket="custom-batch-bucket"
+        )
 
-            assert config.batch_gcs_bucket == "custom-batch-bucket"
+        assert config.batch_gcs_bucket == "custom-batch-bucket"
 
     def test_config_default_sa_email(self):
         """By default, sa_email should be None unless explicitly provided"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(project_id="test-project")
+        config = GreyCloudConfig(project_id="test-project")
 
-            assert config.sa_email is None
+        assert config.sa_email is None
 
     def test_config_sa_email_from_env(self):
         """Test service account email coming from environment"""
-        import subprocess
 
         with patch.dict(
             os.environ, {"SA_EMAIL": "env-sa@project.iam.gserviceaccount.com"}
         ):
-            with patch.object(subprocess, "run") as mock_run:
-                mock_run.return_value.returncode = 0
-                config = GreyCloudConfig(project_id="test-project")
-
+            config = GreyCloudConfig(project_id="test-project")
             assert config.sa_email == "env-sa@project.iam.gserviceaccount.com"
 
     def test_config_use_api_key_from_env(self):
         """Test use_api_key from environment variable"""
-        import subprocess
 
         test_cases = [
             ("1", True),
@@ -193,102 +162,74 @@ class TestGreyCloudConfig:
 
         for env_value, expected in test_cases:
             with patch.dict(os.environ, {"USE_API_KEY": env_value}):
-                with patch.object(subprocess, "run") as mock_run:
-                    mock_run.return_value.returncode = 0
-                    config = GreyCloudConfig(project_id="test-project")
-                    assert config.use_api_key == expected
+                config = GreyCloudConfig(project_id="test-project")
+                assert config.use_api_key == expected
 
     def test_config_grounding_mode_default(self):
         """Default grounding_mode is 'inject' (new behavior, no config change needed)"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(project_id="test-project")
+        config = GreyCloudConfig(project_id="test-project")
 
-            assert config.grounding_mode == "inject"
+        assert config.grounding_mode == "inject"
 
     def test_config_grounding_mode_tool(self):
         """grounding_mode='tool' is accepted (legacy escape hatch)"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(project_id="test-project", grounding_mode="tool")
+        config = GreyCloudConfig(project_id="test-project", grounding_mode="tool")
 
-            assert config.grounding_mode == "tool"
+        assert config.grounding_mode == "tool"
 
     def test_config_grounding_mode_invalid_raises(self):
         """An invalid grounding_mode value raises ValueError"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            with pytest.raises(ValueError, match="grounding_mode"):
-                GreyCloudConfig(project_id="test-project", grounding_mode="bogus")
+        with pytest.raises(ValueError, match="grounding_mode"):
+            GreyCloudConfig(project_id="test-project", grounding_mode="bogus")
 
     def test_config_vertex_ai_search(self):
         """Test Vertex AI Search configuration"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(
-                project_id="test-project",
-                use_vertex_ai_search=True,
-                vertex_ai_search_datastore="projects/test/locations/us/datastores/test-ds",
-            )
+        config = GreyCloudConfig(
+            project_id="test-project",
+            use_vertex_ai_search=True,
+            vertex_ai_search_datastore="projects/test/locations/us/datastores/test-ds",
+        )
 
-            assert config.use_vertex_ai_search is True
-            assert (
-                config.vertex_ai_search_datastore
-                == "projects/test/locations/us/datastores/test-ds"
-            )
+        assert config.use_vertex_ai_search is True
+        assert (
+            config.vertex_ai_search_datastore
+            == "projects/test/locations/us/datastores/test-ds"
+        )
 
     def test_config_thinking_level(self):
         """Test thinking level configuration"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(project_id="test-project", thinking_level="HIGH")
+        config = GreyCloudConfig(project_id="test-project", thinking_level="HIGH")
 
-            assert config.thinking_level == "HIGH"
+        assert config.thinking_level == "HIGH"
 
-            config_none = GreyCloudConfig(
-                project_id="test-project", thinking_level=None
-            )
-            assert config_none.thinking_level is None
+        config_none = GreyCloudConfig(project_id="test-project", thinking_level=None)
+        assert config_none.thinking_level is None
 
     def test_config_min_grounding_query_chars_default_off(self):
         """min_grounding_query_chars defaults to 0 (skip guard off)"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(project_id="test-project")
+        config = GreyCloudConfig(project_id="test-project")
 
-            assert config.min_grounding_query_chars == 0
+        assert config.min_grounding_query_chars == 0
 
     def test_config_min_grounding_query_chars_positive(self):
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(
-                project_id="test-project", min_grounding_query_chars=25
-            )
+        config = GreyCloudConfig(
+            project_id="test-project", min_grounding_query_chars=25
+        )
 
-            assert config.min_grounding_query_chars == 25
+        assert config.min_grounding_query_chars == 25
 
     def test_config_min_grounding_query_chars_negative_raises(self):
         """A negative threshold is invalid: it would silently disable nothing"""
-        import subprocess
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            with pytest.raises(ValueError, match="min_grounding_query_chars"):
-                GreyCloudConfig(project_id="test-project", min_grounding_query_chars=-1)
+        with pytest.raises(ValueError, match="min_grounding_query_chars"):
+            GreyCloudConfig(project_id="test-project", min_grounding_query_chars=-1)
 
     def test_config_extractive_content_spec_default_off(self):
         """extractive_content_spec defaults to False (snippets-only, the wire
@@ -305,10 +246,11 @@ class TestGreyCloudConfig:
 
         assert config.extractive_content_spec is True
 
-    def test_config_extractive_content_spec_rejects_non_bool(self):
-        """A truthy non-bool (e.g. the string "false") must be rejected, not
-        silently coerced: it would opt every search into extractiveContentSpec
-        while the caller believes the flag is off."""
-        for bad in ("false", "0", 1):
-            with pytest.raises(TypeError, match="extractive_content_spec"):
-                GreyCloudConfig(project_id="test-project", extractive_content_spec=bad)
+    @pytest.mark.parametrize("bad", ["false", "0", 1])
+    def test_config_extractive_content_spec_rejects_non_bool(self, bad):
+        """A truthy non-bool (e.g. the string "false" — falsy-looking but
+        truthy) must be rejected, not silently coerced: it would opt every
+        search into extractiveContentSpec while the caller believes the flag
+        is off."""
+        with pytest.raises(TypeError, match="extractive_content_spec"):
+            GreyCloudConfig(project_id="test-project", extractive_content_spec=bad)

@@ -135,7 +135,7 @@ class TestNormalizeQuery:
         )
 
     def test_section_15_evidence_regression(self):
-        # Diagnosis 1.5: the quoted full title collapses the search to 0
+        # The quoted full title collapses the search to 0
         # results while the unquoted variant returns 5. Normalization must
         # turn the quoted form into exactly the unquoted form.
         quoted = (
@@ -173,8 +173,8 @@ class TestNormalizeQuery:
 
     def test_adjacent_tokens_not_merged(self):
         # Quotes are replaced with a space, not removed, so tokens adjacent to
-        # a quote stay separate (review finding: '"renewable"energy' previously
-        # became the single fused token 'renewableenergy').
+        # a quote stay separate ('"renewable"energy' previously became the
+        # single fused token 'renewableenergy').
         assert _normalize_query('"renewable"energy') == "renewable energy"
         assert _normalize_query('5"6"') == "5 6"
 
@@ -248,6 +248,41 @@ class TestSearchSources:
             assert search_sources(grounding_config, Exploding()) == []
         assert mock_post.call_count == 0
 
+    @pytest.mark.parametrize(
+        "body", [{"results": 5}, ["not", "an", "object"], {"results": 0}]
+    )
+    def test_malformed_body_is_a_non_retryable_server_data_error(
+        self, grounding_config, body
+    ):
+        """A 200 body whose shape can't be interpreted (non-object, truthy
+        non-sized ``results``, falsy non-list garbage) is malformed, not
+        transient: no retries may be burned on it, and it must not
+        masquerade as a successful zero-hit (which would trigger the
+        unquoted-fallback duplicate search)."""
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, body),
+            ) as mock_post:
+                sources = search_sources(grounding_config, 'a "phrase" q')
+        assert sources == []
+        assert mock_post.call_count == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body", [{"results": 5}, ["not", "an", "object"], {"results": 0}]
+    )
+    async def test_async_malformed_body_is_a_non_retryable_server_data_error(
+        self, grounding_config, body
+    ):
+        """Async twin of test_malformed_body_is_a_non_retryable_server_data_error."""
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch_async_client(FakeResponse(200, body)) as factory:
+                sources = await asearch_sources(grounding_config, 'a "phrase" q')
+        post_mock = factory.return_value.__aenter__.return_value.post
+        assert sources == []
+        assert post_mock.call_count == 1
+
     def test_quoted_query_preserved_when_results_found(self, grounding_config):
         # retry_unquoted (default True): the quoted query is searched first so
         # exact-phrase semantics are preserved when it matches.
@@ -264,7 +299,7 @@ class TestSearchSources:
     def test_quoted_query_falls_back_to_unquoted_on_zero_results(
         self, grounding_config
     ):
-        # Diagnosis 1.5 case: the quoted long title returns 0 results, so the
+        # Quoted-long-title case: the quoted form returns 0 results, so the
         # search falls back to the unquoted query (one extra call).
         quoted = (
             '"The Impact of Climate Change on Coastal Communities" renewable energy'
@@ -723,6 +758,25 @@ class TestBuildGroundingContext:
 
 class TestASearchSources:
     @pytest.mark.asyncio
+    async def test_non_string_query_with_raising_dunder_is_rejected_safely(
+        self, grounding_config
+    ):
+        """Async twin of the sync never-raise test: a wrong-typed query must
+        be rejected by the isinstance check alone — never coerced."""
+
+        class Exploding:
+            def __str__(self):
+                raise RuntimeError("boom from __str__")
+
+            def __bool__(self):
+                raise RuntimeError("boom from __bool__")
+
+        with patch_async_client(FakeResponse(200, OK_PAYLOAD)) as factory:
+            assert await asearch_sources(grounding_config, Exploding()) == []
+        post_mock = factory.return_value.__aenter__.return_value.post
+        assert post_mock.call_count == 0
+
+    @pytest.mark.asyncio
     async def test_success_and_request_shape(self, grounding_config):
         with patch(
             "greycloud.grounding._build_headers",
@@ -883,7 +937,7 @@ class TestASearchSources:
 
 
 class TestInstructionLine:
-    """The injected instruction is conditional (RAG proposal item 3): it must
+    """The injected instruction is conditional: it must
     not imply every response must contain a quote/citation, only that any
     quote comes from the sources and is cited."""
 
@@ -978,32 +1032,6 @@ class TestSearchPayloadSpec:
                 sources = search_sources(config, "q")
         assert sources[0].snippet == "snippet-only passage"
 
-    def test_non_list_results_is_a_non_retryable_server_data_error(
-        self, grounding_config
-    ):
-        """A 200 body whose ``results`` is a truthy non-sized value (e.g. an
-        int) is malformed, not transient: no retries may be burned on it."""
-        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch(
-                "greycloud.grounding.requests.post",
-                return_value=FakeResponse(200, {"results": 5}),
-            ) as mock_post:
-                sources = search_sources(grounding_config, "q")
-        assert sources == []
-        assert mock_post.call_count == 1
-
-    def test_non_object_body_is_a_non_retryable_server_data_error(
-        self, grounding_config
-    ):
-        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch(
-                "greycloud.grounding.requests.post",
-                return_value=FakeResponse(200, ["not", "an", "object"]),
-            ) as mock_post:
-                sources = search_sources(grounding_config, "q")
-        assert sources == []
-        assert mock_post.call_count == 1
-
 
 class TestChunkingConfigRejection:
     """Chunking-config datastores reject extractiveContentSpec with HTTP 400
@@ -1066,6 +1094,70 @@ class TestChunkingConfigRejection:
             and "Discovery Engine search failed with HTTP 400" in r.message
         ]
         assert warnings, "expected the standard WARNING for the 400"
+
+    @staticmethod
+    def _flag_on_config(grounding_config):
+        return replace(grounding_config, extractive_content_spec=True)
+
+    def _run_flag_on_400(self, grounding_config, caplog, text):
+        config = self._flag_on_config(grounding_config)
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(400, {"error": {"code": 400}}, text=text),
+            ):
+                with caplog.at_level("DEBUG", logger="greycloud.grounding"):
+                    sources = search_sources(config, "q")
+        assert sources == []
+        return self._chunking_errors(caplog.records)
+
+    def test_marker_past_truncation_point_still_logs_error(
+        self, grounding_config, caplog
+    ):
+        """Regression guard for the full-body match: the marker mention can
+        sit past any truncation point (e.g. inside error.details), so
+        reverting to a truncated-substring test must fail this test."""
+        body = "x" * 500 + " max_extractive_answer_count must be not specified"
+        errors = self._run_flag_on_400(grounding_config, caplog, body)
+        assert errors, "expected an ERROR log even with the marker past char 300"
+
+    def test_camel_case_marker_logs_error(self, grounding_config, caplog):
+        """The wire field name (camelCase) also trips the loud path."""
+        errors = self._run_flag_on_400(
+            grounding_config,
+            caplog,
+            "maxExtractiveAnswerCount must be not specified for this datastore",
+        )
+        assert errors, "expected an ERROR log for the camelCase marker"
+
+    def test_spec_field_rewording_logs_error(self, grounding_config, caplog):
+        """A vendor rewording that blames the spec field itself instead of
+        the answer-count limit still trips the loud path."""
+        errors = self._run_flag_on_400(
+            grounding_config,
+            caplog,
+            "extractiveContentSpec is not supported for datastores with "
+            "chunking config",
+        )
+        assert errors, "expected an ERROR log for the reworded spec-field body"
+
+    def test_flag_on_without_marker_logs_standard_warning(
+        self, grounding_config, caplog
+    ):
+        """A 400 that mentions nothing extractive-related is an ordinary
+        failure: WARNING only, never the chunking-config ERROR."""
+        config = self._flag_on_config(grounding_config)
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(
+                    400, {"error": {"code": 400}}, text="pageSize is invalid"
+                ),
+            ):
+                with caplog.at_level("DEBUG", logger="greycloud.grounding"):
+                    sources = search_sources(config, "q")
+        assert sources == []
+        assert not self._chunking_errors(caplog.records)
 
     @pytest.mark.asyncio
     async def test_async_400_with_flag_on_logs_error_with_hint(

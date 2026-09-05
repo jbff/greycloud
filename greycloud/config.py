@@ -67,18 +67,18 @@ class GreyCloudConfig:
     # Grounding: "inject" (default) runs the Discovery Engine search in GreyCloud and
     # injects results into the prompt. "tool" keeps the legacy tools.retrieval.
     grounding_mode: str = "inject"  # "inject" | "tool"
-    # Skip-guard threshold (RAG proposal item 2): when > 0, inject-mode
+    # Skip-guard threshold: when > 0, inject-mode
     # grounding skips the Discovery Engine search when the effective query
     # (per-call grounding_query if given, else the last user message) is
     # shorter than this many characters. 0 (default) preserves current
     # behavior — conversational turns like "thanks" then still trigger a search.
     min_grounding_query_chars: int = 0
-    # Opt-in extractive answers (RAG proposal item 4): when True, the
+    # Opt-in extractive answers: when True, the
     # :search request includes extractiveContentSpec to get paragraph-scale
     # passages. False (default) sends the snippets-only payload, which every
     # datastore type accepts — datastores built with chunking config reject
     # extractiveContentSpec with HTTP 400, so this is the caller's opt-in,
-    # not a library default (0.3.12–0.3.14 sent it unconditionally and broke
+    # not a library default (0.3.12 first sent it unconditionally and broke
     # every chunked datastore).
     extractive_content_spec: bool = False
 

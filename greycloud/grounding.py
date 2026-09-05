@@ -62,18 +62,48 @@ _QUOTE_RE = re.compile(r'["“”＂]')
 
 # Only *balanced* quote pairs are phrase delimiters. A lone quote is a unit
 # mark (inches/seconds/ditto, e.g. '15" laptop') and must survive; stripping
-# it would silently destroy the unit (review finding #6). The pair must
+# it would silently destroy the unit. The pair must
 # enclose content that starts and ends with a word character, so two unit
 # marks ('5" 6"') and quotes-only queries ('"""') are left untouched.
 _QUOTE_PAIR_RE = re.compile(r'["“”＂](?=[^"“”＂\s])([^"“”＂]+?)(?<=[^"“”＂\s])["“”＂]')
 
-# Matches the chunking-config 400's field mention in the spellings it can
-# plausibly appear in: the snake_case form Google's message uses
-# (max_extractive_answer_count), the camelCase wire name
-# (maxExtractiveAnswerCount), and hyphen/space variants.
+# Matches the chunking-config 400's blame in the spellings it can plausibly
+# appear in: Google's current message names the max_extractive_answer_count
+# limit (snake_case), while the camelCase wire name (maxExtractiveAnswerCount),
+# the extractiveContentSpec field itself, and hyphen/space variants are the
+# rewordings a vendor message could plausibly use. Matching the spec-field
+# name is safe from false positives while extractive_content_spec is on: a
+# 400 that mentions the field the caller just opted into is the chunking
+# rejection, not an unrelated failure.
 _CHUNKING_MARKER_RE = re.compile(
-    r"max[\s_-]*extractive[\s_-]*answer[\s_-]*count", re.IGNORECASE
+    r"(?:max[\s_-]*extractive[\s_-]*answer[\s_-]*count"
+    r"|extractive[\s_-]*content[\s_-]*spec)",
+    re.IGNORECASE,
 )
+
+
+def _extractive_spec(config: GreyCloudConfig, prefix: str) -> bool:
+    """Read ``extractive_content_spec`` without coercing (never raises).
+
+    Returns the flag only when it is exactly a bool; anything else (a value
+    set after construction, or a duck-typed config) is ignored with a
+    warning, degrading to the snippets-only payload. Coercing via ``bool()``
+    would put ``extractiveContentSpec`` on the wire for a truthy non-bool
+    such as the string ``"false"`` (400 on chunked datastores while the
+    caller believes the flag is off), and could itself raise out of the
+    search functions if ``__bool__`` does — both violations of the
+    never-raise contract.
+    """
+    spec = getattr(config, "extractive_content_spec", False)
+    if isinstance(spec, bool):
+        return spec
+    logger.warning(
+        "%s: extractive_content_spec is not a bool (%s); ignoring it and "
+        "sending the snippets-only payload",
+        prefix,
+        type(spec).__name__,
+    )
+    return False
 
 
 def _collapse_ws(text: str) -> str:
@@ -86,15 +116,15 @@ def _has_searchable_content(query: str) -> bool:
 
     A quotes-only query (e.g. ``'\"\"\"'``) has no searchable tokens once the
     phrase delimiters are removed; sending it to Discovery Engine is a wasted
-    call (review finding #1).
+    call.
     """
     return bool(_collapse_ws(_QUOTE_RE.sub(" ", query)))
 
 
 # Instruction line appended after the grounding block, mirroring the app's
-# knowledge-block pattern (diagnosis 4.3.2): when the model quotes, it quotes
-# only from these sources and cites each quote with its [n] citation number.
-# Deliberately conditional (RAG proposal item 3): the unconditional phrasing
+# knowledge-block pattern: when the model quotes, it quotes only from these
+# sources and cites each quote with its [n] citation number. Deliberately
+# conditional: the unconditional phrasing
 # implied every response must contain a quote/citation, and because the block
 # is prepended to the last user message the instruction outranked the system
 # prompt — callers saw citations leak into pleasantries and sign-offs.
@@ -185,6 +215,12 @@ def _shape_results(data: dict, max_chars: int) -> List[GroundingSource]:
     additionally capped at an even share of the budget (with a floor so a
     long result list cannot shrink the share to nothing) — otherwise the
     first answers eat the whole budget and later sources keep nothing.
+
+    Raises:
+        ValueError: if the body is not a JSON object, or its ``results``
+        field is present but not a list. Callers treat this as a
+        non-retryable server-data problem (like invalid JSON), never as a
+        transient failure.
     """
     if not isinstance(data, dict):
         # Malformed body (not a JSON object): a server-data problem like
@@ -197,11 +233,17 @@ def _shape_results(data: dict, max_chars: int) -> List[GroundingSource]:
         )
 
     sources: List[GroundingSource] = []
-    results = data.get("results") or []
+    results = data.get("results")
+    if results is None:
+        # A missing (or null) ``results`` key is a legitimate empty result
+        # list, not a malformed body.
+        results = []
     if not isinstance(results, list):
-        # Malformed shape (e.g. a truthy non-sized value such as an int):
-        # same reasoning as above — raise into the caller's non-retryable
-        # ValueError path rather than burning retries on a shape we can't fix.
+        # Malformed shape (e.g. a truthy non-sized value such as an int, or
+        # falsy garbage like 0 — which must not masquerade as a zero-hit
+        # success): same reasoning as above — raise into the caller's
+        # non-retryable ValueError path rather than burning retries on a
+        # shape we can't fix.
         raise ValueError(
             f"Discovery Engine response 'results' field is not a list: "
             f"{type(results).__name__}"
@@ -226,9 +268,9 @@ def _shape_results(data: dict, max_chars: int) -> List[GroundingSource]:
 
         raw_passage = ""
         # Extractive answers first (paragraph-scale); the REST API uses the
-        # camelCase key. Malformed shapes (non-list) are treated as "no
-        # answers" rather than raising inside the enclosing try, which would
-        # burn retry attempts on a shape we can't fix.
+        # camelCase key. A malformed *sub-field* (non-list) is treated as
+        # "no answers" so the rest of the response still yields its valid
+        # sources — only the top-level body shape raises (see above).
         for key in ("extractiveAnswers", "extractive_answers"):
             answers = dsd.get(key) or []
             if isinstance(answers, list):
@@ -242,9 +284,9 @@ def _shape_results(data: dict, max_chars: int) -> List[GroundingSource]:
                 break
         # Snippet fallback (1-3 sentence keyword-context fragment).
         if not raw_passage:
-            # Malformed-shape responses may carry a non-list ``snippets`` (e.g. a
-            # dict); treat that as "no snippet" instead of raising inside the
-            # enclosing try (which would burn retry attempts on a shape we can't fix).
+            # A malformed *sub-field* (non-list ``snippets``, e.g. a dict) is
+            # treated as "no snippet" so the rest of the response still yields
+            # its valid sources — only the top-level body shape raises.
             snippets = dsd.get("snippets") or []
             if isinstance(snippets, list) and snippets:
                 first = snippets[0]
@@ -335,7 +377,7 @@ def _search_payload(
     1-3 sentence keyword fragments — but datastores created with chunking
     config reject the field with HTTP 400, so which content types the
     datastore supports is the caller's knowledge to opt into, never a
-    library-side default (0.3.12–0.3.14 sent it unconditionally and broke
+    library-side default (0.3.12 first sent it unconditionally and broke
     every chunked datastore).
     """
     content_search_spec: dict = {"snippetSpec": {"returnSnippet": True}}
@@ -395,8 +437,8 @@ def _normalize_query(query: str) -> str:
     Discovery Engine treats double-quoted phrases as exact contiguous verbatim
     matches. A quoted long title exists in document *metadata*, not as
     contiguous body text, so the exact-phrase requirement can never be
-    satisfied and keyword AND-semantics collapse the whole query to 0 results
-    (diagnosis section 1.5). Replace each *balanced* quote pair with a space so
+    satisfied and keyword AND-semantics collapse the whole query to 0 results.
+    Replace each *balanced* quote pair with a space so
     every token participates as an ordinary keyword without adjacent tokens
     merging (``"renewable"energy`` -> ``renewable energy``), and trim / collapse
     internal whitespace.
@@ -428,24 +470,30 @@ def _normalize_query(query: str) -> str:
 
 
 def _validate_args(
-    config: GreyCloudConfig, query: str, page_size: int
+    config: GreyCloudConfig,
+    query: str,
+    page_size: int,
+    max_chars: int,
+    timeout: float,
 ) -> Optional[str]:
     """Return an error message when the search cannot run, else None.
 
     Also rejects wrong-typed arguments (non-string datastore/query, non-int
-    page_size) so no argument-value class can raise out of the search
-    functions and break the never-raise contract.
+    page_size/max_chars, non-numeric timeout) so no argument-value class can
+    raise out of the search functions and break the never-raise contract.
     """
-    # Type checks come first: a wrong-typed value (e.g. an object whose
-    # __str__/__bool__ raises) must be rejected by isinstance alone, never
-    # coerced — coercion could raise out of the search functions and break
-    # the never-raise contract.
+    # Type checks come first, and nothing is coerced: a wrong-typed value
+    # (e.g. an object whose __str__/__bool__/__len__ raises) must be
+    # rejected by isinstance alone — coercion or truthiness on the raw
+    # object could raise out of the search functions. Even the query
+    # emptiness test goes through the C-level whitespace regex rather than
+    # query.strip() or bool(query), which a str subclass can override.
     if not isinstance(query, str):
         return "query must be a string; skipping Discovery Engine search"
-    if not query.strip():
+    if not _collapse_ws(query):
         return "empty query; skipping Discovery Engine search"
     datastore = getattr(config, "vertex_ai_search_datastore", None)
-    if not datastore:
+    if datastore is None:
         return (
             "GreyCloudConfig.vertex_ai_search_datastore is not set; "
             "skipping Discovery Engine search"
@@ -455,8 +503,17 @@ def _validate_args(
             "GreyCloudConfig.vertex_ai_search_datastore must be a string; "
             "skipping Discovery Engine search"
         )
+    if not datastore:
+        return (
+            "GreyCloudConfig.vertex_ai_search_datastore is not set; "
+            "skipping Discovery Engine search"
+        )
     if not isinstance(page_size, int):
         return "page_size must be an integer; skipping Discovery Engine search"
+    if not isinstance(max_chars, int):
+        return "max_chars must be an integer; skipping Discovery Engine search"
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        return "timeout must be a number; skipping Discovery Engine search"
     return None
 
 
@@ -480,9 +537,10 @@ def _search_sources_once(
         return [], False
 
     datastore = getattr(config, "vertex_ai_search_datastore")
-    # Read the flag once: the payload and the 400 log classification must
-    # agree, and a divergent second read could misclassify the failure.
-    spec = bool(getattr(config, "extractive_content_spec", False))
+    # Read the flag once, without coercing: the payload and the 400 log
+    # classification must agree, and a divergent second read could
+    # misclassify the failure.
+    spec = _extractive_spec(config, "search_sources")
     last_exc: Optional[BaseException] = None
 
     for attempt in range(_MAX_ATTEMPTS):
@@ -559,7 +617,7 @@ def search_sources(
     ``extractive_content_spec`` is on) logs at ERROR with a disable hint.
 
     Discovery Engine treats double-quoted phrases as exact contiguous verbatim
-    matches, which can collapse a keyword query to 0 results (diagnosis 1.5).
+    matches, which can collapse a keyword query to 0 results.
     When the query contains quote characters, the quoted form is searched
     first to preserve exact-phrase semantics; if it returns 0 results, the
     search is retried with the unquoted form (see ``retry_unquoted``).
@@ -577,7 +635,7 @@ def search_sources(
     Returns:
         List of up to ``page_size`` GroundingSources, ordered by relevance.
     """
-    invalid = _validate_args(config, query, page_size)
+    invalid = _validate_args(config, query, page_size, max_chars, timeout)
     if invalid:
         logger.warning("search_sources: %s", invalid)
         return []
@@ -623,9 +681,10 @@ async def _asearch_sources_once(
         return [], False
 
     datastore = getattr(config, "vertex_ai_search_datastore")
-    # Read the flag once: the payload and the 400 log classification must
-    # agree, and a divergent second read could misclassify the failure.
-    spec = bool(getattr(config, "extractive_content_spec", False))
+    # Read the flag once, without coercing: the payload and the 400 log
+    # classification must agree, and a divergent second read could
+    # misclassify the failure.
+    spec = _extractive_spec(config, "asearch_sources")
     last_exc: Optional[BaseException] = None
 
     for attempt in range(_MAX_ATTEMPTS):
@@ -699,7 +758,7 @@ async def asearch_sources(
     any failure so the caller can generate without context. See
     :func:`search_sources` for the ``retry_unquoted`` behavior.
     """
-    invalid = _validate_args(config, query, page_size)
+    invalid = _validate_args(config, query, page_size, max_chars, timeout)
     if invalid:
         logger.warning("asearch_sources: %s", invalid)
         return []
@@ -805,7 +864,7 @@ def _invoke_grounding_callback(
     on_grounding: Callable[[List[GroundingSource]], None],
     sources: List[GroundingSource],
 ) -> None:
-    """Invoke a sync ``on_grounding`` callback, never raising (proposal §5).
+    """Invoke a sync ``on_grounding`` callback, never raising.
 
     A coroutine-function callback is driven to completion with ``asyncio.run``
     when no loop is running in this thread. When the sync client is used from

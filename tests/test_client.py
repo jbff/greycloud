@@ -757,8 +757,8 @@ class TestGreyCloudClientGroundingInjection:
 
         Unlike the other inject tests, search_sources is NOT mocked — only the
         HTTP layer is — so _normalize_query and the retry_unquoted fallback
-        execute for real (review finding #14: normalization never ran
-        end-to-end through the client).
+        execute for real (normalization previously never ran end-to-end
+        through the client).
         """
         with patch("greycloud.client.create_client") as mock_create:
             with patch("greycloud.grounding._build_headers", return_value=({}, None)):
@@ -800,7 +800,7 @@ class TestGreyCloudClientGroundingInjection:
 
 class TestGroundingQueryAndSkip:
     """Per-call grounding_query override, grounding skip flag, and the
-    config-level min_grounding_query_chars threshold (RAG proposal items 1-2).
+    config-level min_grounding_query_chars threshold.
     All mock search_sources; no live calls."""
 
     @staticmethod
@@ -1037,7 +1037,7 @@ class TestGroundingQueryAndSkip:
 
 
 class TestOnGroundingCallback:
-    """on_grounding contract (RAG proposal §5): invoked once per generate with
+    """on_grounding contract: invoked once per generate with
     the exact source list being injected, with [] when the search ran but
     returned nothing, and not at all when grounding was skipped entirely.
     Callback exceptions never propagate."""
