@@ -334,7 +334,8 @@ class GreyCloudClient:
             # the model call (proposal §5). Callback errors never propagate.
             _invoke_grounding_callback(on_grounding, sources)
         if not sources:
-            # Search failures are logged at WARNING inside search_sources; an
+            # Search failures are logged inside search_sources (WARNING; ERROR for
+            # the chunking-config 400 when extractive_content_spec is on); an
             # empty result set is the genuine "no matches" case.
             logger.info(
                 "grounding_mode=inject, search returned no sources; "

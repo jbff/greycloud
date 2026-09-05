@@ -3,14 +3,15 @@ Discovery Engine search-and-ground utilities for GreyCloud.
 
 Explicit retrieval for grounded generation: instead of relying on the
 server-side ``tools.retrieval.vertexAiSearch`` mechanism (broken for the
-Gemini 3.x line, see GREYCLOUD_GROUNDING_DIAGNOSIS.md), query the Vertex AI
+Gemini 3.x line), query the Vertex AI
 Search / Discovery Engine ``:search`` API directly with GreyCloud's existing
 credentials and shape the results into citation-able grounding sources.
 
 This module is deliberately self-contained: it never raises on search failure
-(``search_sources`` / ``asearch_sources`` log a warning and return ``[]``) so
-the generation path can degrade to *generation without context* instead of
-failing the request.
+(``search_sources`` / ``asearch_sources`` log the failure and return ``[]`` —
+WARNING for ordinary failures, ERROR for the chunking-config 400 when
+``extractive_content_spec`` is on) so the generation path can degrade to
+*generation without context* instead of failing the request.
 """
 
 import asyncio
@@ -65,6 +66,14 @@ _QUOTE_RE = re.compile(r'["“”＂]')
 # enclose content that starts and ends with a word character, so two unit
 # marks ('5" 6"') and quotes-only queries ('"""') are left untouched.
 _QUOTE_PAIR_RE = re.compile(r'["“”＂](?=[^"“”＂\s])([^"“”＂]+?)(?<=[^"“”＂\s])["“”＂]')
+
+# Matches the chunking-config 400's field mention in the spellings it can
+# plausibly appear in: the snake_case form Google's message uses
+# (max_extractive_answer_count), the camelCase wire name
+# (maxExtractiveAnswerCount), and hyphen/space variants.
+_CHUNKING_MARKER_RE = re.compile(
+    r"max[\s_-]*extractive[\s_-]*answer[\s_-]*count", re.IGNORECASE
+)
 
 
 def _collapse_ws(text: str) -> str:
@@ -178,10 +187,25 @@ def _shape_results(data: dict, max_chars: int) -> List[GroundingSource]:
     first answers eat the whole budget and later sources keep nothing.
     """
     if not isinstance(data, dict):
-        return []
+        # Malformed body (not a JSON object): a server-data problem like
+        # invalid JSON, not transient — raise so the caller's non-retryable
+        # ValueError path handles it instead of burning retry attempts on a
+        # shape we can't fix.
+        raise ValueError(
+            f"Discovery Engine response body is not a JSON object: "
+            f"{type(data).__name__}"
+        )
 
     sources: List[GroundingSource] = []
     results = data.get("results") or []
+    if not isinstance(results, list):
+        # Malformed shape (e.g. a truthy non-sized value such as an int):
+        # same reasoning as above — raise into the caller's non-retryable
+        # ValueError path rather than burning retries on a shape we can't fix.
+        raise ValueError(
+            f"Discovery Engine response 'results' field is not a list: "
+            f"{type(results).__name__}"
+        )
     remaining = max(0, max_chars)
     per_source_cap = (
         max(_MIN_PER_SOURCE_CHARS, max_chars // len(results)) if results else 0
@@ -311,8 +335,8 @@ def _search_payload(
     1-3 sentence keyword fragments — but datastores created with chunking
     config reject the field with HTTP 400, so which content types the
     datastore supports is the caller's knowledge to opt into, never a
-    library-side default (0.3.14 sent it unconditionally and broke every
-    chunked datastore).
+    library-side default (0.3.12–0.3.14 sent it unconditionally and broke
+    every chunked datastore).
     """
     content_search_spec: dict = {"snippetSpec": {"returnSnippet": True}}
     if extractive_content_spec:
@@ -329,17 +353,24 @@ def _search_payload(
 def _log_search_http_error(prefix: str, response, extractive_requested: bool) -> None:
     """Log a non-2xx ``:search`` response at the appropriate level.
 
-    A 400 whose body blames ``max_extractive_answer_count`` while the caller
+    A 400 whose body blames the extractive-answer limit while the caller
     asked for the extractive spec means the datastore uses chunking config:
     log at ERROR with the disable hint (never silently retry into a
     different mode — the caller asked for extractive, so the failure must be
     loud, not downgraded). Every other non-2xx logs the standard WARNING.
+
+    The marker is matched against the *full* body (the mention can sit past
+    any truncation point, e.g. inside ``error.details``) and accepts the
+    snake_case spelling Google's 400 uses as well as the camelCase wire name
+    and hyphen/space variants, so a vendor rewording that keeps the field
+    name still trips the loud path. The body is truncated only for the log
+    line itself.
     """
-    body = response.text[:300]
+    body = response.text
     if (
         response.status_code == 400
         and extractive_requested
-        and "max_extractive_answer_count" in body
+        and _CHUNKING_MARKER_RE.search(body)
     ):
         logger.error(
             "%s: Discovery Engine search failed with HTTP 400: %s — the datastore "
@@ -347,14 +378,14 @@ def _log_search_http_error(prefix: str, response, extractive_requested: bool) ->
             "set GreyCloudConfig.extractive_content_spec=False (the default) to "
             "search this datastore",
             prefix,
-            body,
+            body[:300],
         )
     else:
         logger.warning(
             "%s: Discovery Engine search failed with HTTP %s: %s",
             prefix,
             response.status_code,
-            body,
+            body[:300],
         )
 
 
@@ -405,10 +436,14 @@ def _validate_args(
     page_size) so no argument-value class can raise out of the search
     functions and break the never-raise contract.
     """
-    if not query or not str(query).strip():
-        return "empty query; skipping Discovery Engine search"
+    # Type checks come first: a wrong-typed value (e.g. an object whose
+    # __str__/__bool__ raises) must be rejected by isinstance alone, never
+    # coerced — coercion could raise out of the search functions and break
+    # the never-raise contract.
     if not isinstance(query, str):
         return "query must be a string; skipping Discovery Engine search"
+    if not query.strip():
+        return "empty query; skipping Discovery Engine search"
     datastore = getattr(config, "vertex_ai_search_datastore", None)
     if not datastore:
         return (
@@ -445,18 +480,15 @@ def _search_sources_once(
         return [], False
 
     datastore = getattr(config, "vertex_ai_search_datastore")
+    # Read the flag once: the payload and the 400 log classification must
+    # agree, and a divergent second read could misclassify the failure.
+    spec = bool(getattr(config, "extractive_content_spec", False))
     last_exc: Optional[BaseException] = None
 
     for attempt in range(_MAX_ATTEMPTS):
         try:
             url = _search_url(datastore)
-            payload = _search_payload(
-                query,
-                page_size,
-                extractive_content_spec=getattr(
-                    config, "extractive_content_spec", False
-                ),
-            )
+            payload = _search_payload(query, page_size, extractive_content_spec=spec)
             response = requests.post(
                 url, json=payload, headers=headers, timeout=timeout
             )
@@ -476,23 +508,22 @@ def _search_sources_once(
                 _log_search_http_error(
                     "search_sources",
                     response,
-                    extractive_requested=getattr(
-                        config, "extractive_content_spec", False
-                    ),
+                    extractive_requested=spec,
                 )
                 return [], False
             try:
                 data = response.json()
+                sources = _shape_results(data, max_chars)
             except ValueError as e:
-                # Server-data problem (unparseable body), not transient: do not retry.
+                # Server-data problem (unparseable body, or a body whose shape
+                # we can't interpret), not transient: do not retry.
                 logger.warning(
-                    "search_sources: invalid JSON in Discovery Engine response "
-                    "(HTTP %s): %s",
+                    "search_sources: invalid or malformed Discovery Engine "
+                    "response (HTTP %s): %s",
                     response.status_code,
                     e,
                 )
                 return [], False
-            sources = _shape_results(data, max_chars)
             return sources, not sources
         except Exception as e:  # noqa: BLE001 - must never raise to the caller
             last_exc = e
@@ -522,8 +553,10 @@ def search_sources(
 ) -> List[GroundingSource]:
     """Search the configured Discovery Engine datastore (sync).
 
-    Never raises: on any exception, non-2xx response, or invalid args it logs a
-    warning and returns ``[]`` so the caller can generate without context.
+    Never raises: on any exception, non-2xx response, or invalid args it logs
+    the failure and returns ``[]`` so the caller can generate without context.
+    Ordinary failures log at WARNING; the chunking-config 400 (when
+    ``extractive_content_spec`` is on) logs at ERROR with a disable hint.
 
     Discovery Engine treats double-quoted phrases as exact contiguous verbatim
     matches, which can collapse a keyword query to 0 results (diagnosis 1.5).
@@ -590,18 +623,15 @@ async def _asearch_sources_once(
         return [], False
 
     datastore = getattr(config, "vertex_ai_search_datastore")
+    # Read the flag once: the payload and the 400 log classification must
+    # agree, and a divergent second read could misclassify the failure.
+    spec = bool(getattr(config, "extractive_content_spec", False))
     last_exc: Optional[BaseException] = None
 
     for attempt in range(_MAX_ATTEMPTS):
         try:
             url = _search_url(datastore)
-            payload = _search_payload(
-                query,
-                page_size,
-                extractive_content_spec=getattr(
-                    config, "extractive_content_spec", False
-                ),
-            )
+            payload = _search_payload(query, page_size, extractive_content_spec=spec)
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(url, json=payload, headers=headers)
             if response.status_code >= 500 or response.status_code == 429:
@@ -620,23 +650,22 @@ async def _asearch_sources_once(
                 _log_search_http_error(
                     "asearch_sources",
                     response,
-                    extractive_requested=getattr(
-                        config, "extractive_content_spec", False
-                    ),
+                    extractive_requested=spec,
                 )
                 return [], False
             try:
                 data = response.json()
+                sources = _shape_results(data, max_chars)
             except ValueError as e:
-                # Server-data problem (unparseable body), not transient: do not retry.
+                # Server-data problem (unparseable body, or a body whose shape
+                # we can't interpret), not transient: do not retry.
                 logger.warning(
-                    "asearch_sources: invalid JSON in Discovery Engine response "
-                    "(HTTP %s): %s",
+                    "asearch_sources: invalid or malformed Discovery Engine "
+                    "response (HTTP %s): %s",
                     response.status_code,
                     e,
                 )
                 return [], False
-            sources = _shape_results(data, max_chars)
             return sources, not sources
         except Exception as e:  # noqa: BLE001 - must never raise to the caller
             last_exc = e

@@ -338,7 +338,8 @@ class GreyCloudAsyncClient:
             # the model call (proposal §5). Callback errors never propagate.
             await _ainvoke_grounding_callback(on_grounding, sources)
         if not sources:
-            # Search failures are logged at WARNING inside asearch_sources; an
+            # Search failures are logged inside asearch_sources (WARNING; ERROR for
+            # the chunking-config 400 when extractive_content_spec is on); an
             # empty result set is the genuine "no matches" case.
             logger.info(
                 "grounding_mode=inject, search returned no sources; "

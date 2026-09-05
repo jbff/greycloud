@@ -5,6 +5,7 @@ All tests mock the HTTP transport (``greycloud.grounding.requests.post`` and
 """
 
 import pytest
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from greycloud.config import GreyCloudConfig
@@ -228,6 +229,24 @@ class TestSearchSources:
         assert body["contentSearchSpec"]["snippetSpec"]["returnSnippet"] is True
         assert mock_post.call_args[1]["headers"] == {"Authorization": "Bearer tok"}
         assert mock_post.call_args[1]["timeout"] == 30.0
+
+    def test_non_string_query_with_raising_dunder_is_rejected_safely(
+        self, grounding_config
+    ):
+        """Never-raise contract: a wrong-typed query must be rejected by the
+        isinstance check alone — never coerced via str()/bool(), which could
+        raise out of the public API."""
+
+        class Exploding:
+            def __str__(self):
+                raise RuntimeError("boom from __str__")
+
+            def __bool__(self):
+                raise RuntimeError("boom from __bool__")
+
+        with patch("greycloud.grounding.requests.post") as mock_post:
+            assert search_sources(grounding_config, Exploding()) == []
+        assert mock_post.call_count == 0
 
     def test_quoted_query_preserved_when_results_found(self, grounding_config):
         # retry_unquoted (default True): the quoted query is searched first so
@@ -884,7 +903,7 @@ class TestSearchPayloadSpec:
     reject the field with HTTP 400, so snippets-only must be the default)."""
 
     def test_default_payload_is_snippets_only(self, grounding_config):
-        """Default (extractive_content_spec=False): the pre-0.3.14 wire
+        """Default (extractive_content_spec=False): the pre-0.3.12 wire
         payload, accepted by every datastore type."""
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch(
@@ -896,13 +915,8 @@ class TestSearchPayloadSpec:
         assert spec == {"snippetSpec": {"returnSnippet": True}}
         assert "extractiveContentSpec" not in spec
 
-    def test_extractive_content_spec_true_includes_spec(self):
-        config = GreyCloudConfig(
-            project_id="test-project-id",
-            location="us-east4",
-            vertex_ai_search_datastore=DATASTORE,
-            extractive_content_spec=True,
-        )
+    def test_extractive_content_spec_true_includes_spec(self, grounding_config):
+        config = replace(grounding_config, extractive_content_spec=True)
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch(
                 "greycloud.grounding.requests.post",
@@ -913,15 +927,36 @@ class TestSearchPayloadSpec:
         assert spec["snippetSpec"] == {"returnSnippet": True}
         assert spec["extractiveContentSpec"] == {"maxExtractiveAnswerCount": 2}
 
-    def test_snippet_fallback_end_to_end_with_flag_on(self):
+    @pytest.mark.asyncio
+    async def test_async_default_payload_is_snippets_only(self, grounding_config):
+        """Async twin of test_default_payload_is_snippets_only: a regression
+        hardcoding either flag value in the async path must not pass CI."""
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch_async_client(FakeResponse(200, {"results": []})) as factory:
+                await asearch_sources(grounding_config, "q")
+        post_mock = factory.return_value.__aenter__.return_value.post
+        spec = post_mock.call_args[1]["json"]["contentSearchSpec"]
+        assert spec == {"snippetSpec": {"returnSnippet": True}}
+        assert "extractiveContentSpec" not in spec
+
+    @pytest.mark.asyncio
+    async def test_async_extractive_content_spec_true_includes_spec(
+        self, grounding_config
+    ):
+        """Async twin of test_extractive_content_spec_true_includes_spec."""
+        config = replace(grounding_config, extractive_content_spec=True)
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch_async_client(FakeResponse(200, {"results": []})) as factory:
+                await asearch_sources(config, "q")
+        post_mock = factory.return_value.__aenter__.return_value.post
+        spec = post_mock.call_args[1]["json"]["contentSearchSpec"]
+        assert spec["snippetSpec"] == {"returnSnippet": True}
+        assert spec["extractiveContentSpec"] == {"maxExtractiveAnswerCount": 2}
+
+    def test_snippet_fallback_end_to_end_with_flag_on(self, grounding_config):
         """Read side is a no-op when the response carries no extractive
         answers: snippets are used under either flag value."""
-        config = GreyCloudConfig(
-            project_id="test-project-id",
-            location="us-east4",
-            vertex_ai_search_datastore=DATASTORE,
-            extractive_content_spec=True,
-        )
+        config = replace(grounding_config, extractive_content_spec=True)
         payload = {
             "results": [
                 {
@@ -943,6 +978,32 @@ class TestSearchPayloadSpec:
                 sources = search_sources(config, "q")
         assert sources[0].snippet == "snippet-only passage"
 
+    def test_non_list_results_is_a_non_retryable_server_data_error(
+        self, grounding_config
+    ):
+        """A 200 body whose ``results`` is a truthy non-sized value (e.g. an
+        int) is malformed, not transient: no retries may be burned on it."""
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, {"results": 5}),
+            ) as mock_post:
+                sources = search_sources(grounding_config, "q")
+        assert sources == []
+        assert mock_post.call_count == 1
+
+    def test_non_object_body_is_a_non_retryable_server_data_error(
+        self, grounding_config
+    ):
+        with patch("greycloud.grounding._build_headers", return_value=({}, None)):
+            with patch(
+                "greycloud.grounding.requests.post",
+                return_value=FakeResponse(200, ["not", "an", "object"]),
+            ) as mock_post:
+                sources = search_sources(grounding_config, "q")
+        assert sources == []
+        assert mock_post.call_count == 1
+
 
 class TestChunkingConfigRejection:
     """Chunking-config datastores reject extractiveContentSpec with HTTP 400
@@ -961,13 +1022,16 @@ class TestChunkingConfigRejection:
             ),
         )
 
+    @staticmethod
+    def _chunking_errors(records):
+        return [
+            r
+            for r in records
+            if r.levelname == "ERROR" and "chunking config" in r.message
+        ]
+
     def test_400_with_flag_on_logs_error_with_hint(self, grounding_config, caplog):
-        config = GreyCloudConfig(
-            project_id="test-project-id",
-            location="us-east4",
-            vertex_ai_search_datastore=DATASTORE,
-            extractive_content_spec=True,
-        )
+        config = replace(grounding_config, extractive_content_spec=True)
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
             with patch(
                 "greycloud.grounding.requests.post",
@@ -977,11 +1041,7 @@ class TestChunkingConfigRejection:
                     sources = search_sources(config, "q")
         assert sources == []
         assert mock_post.call_count == 1  # 400 is not retried
-        errors = [
-            r
-            for r in caplog.records
-            if r.levelname == "ERROR" and "chunking config" in r.message
-        ]
+        errors = self._chunking_errors(caplog.records)
         assert errors, "expected an ERROR log naming chunking config"
         assert "extractive_content_spec" in errors[0].message
 
@@ -996,29 +1056,32 @@ class TestChunkingConfigRejection:
                 with caplog.at_level("DEBUG", logger="greycloud.grounding"):
                     sources = search_sources(grounding_config, "q")
         assert sources == []
-        assert not any(
-            r.levelname == "ERROR" and "chunking config" in r.message
+        assert not self._chunking_errors(caplog.records)
+        # Positive assertion on the WARNING branch: the standard failure log
+        # must still fire (and at WARNING, not be dropped or mis-leveled).
+        warnings = [
+            r
             for r in caplog.records
-        )
+            if r.levelname == "WARNING"
+            and "Discovery Engine search failed with HTTP 400" in r.message
+        ]
+        assert warnings, "expected the standard WARNING for the 400"
 
     @pytest.mark.asyncio
-    async def test_async_400_with_flag_on_logs_error_with_hint(self, caplog):
-        config = GreyCloudConfig(
-            project_id="test-project-id",
-            location="us-east4",
-            vertex_ai_search_datastore=DATASTORE,
-            extractive_content_spec=True,
-        )
+    async def test_async_400_with_flag_on_logs_error_with_hint(
+        self, grounding_config, caplog
+    ):
+        config = replace(grounding_config, extractive_content_spec=True)
         with patch("greycloud.grounding._build_headers", return_value=({}, None)):
-            with patch_async_client(self._bad_request_response()):
+            with patch_async_client(self._bad_request_response()) as factory:
                 with caplog.at_level("DEBUG", logger="greycloud.grounding"):
                     sources = await asearch_sources(config, "q")
         assert sources == []
-        errors = [
-            r
-            for r in caplog.records
-            if r.levelname == "ERROR" and "chunking config" in r.message
-        ]
+        post_mock = factory.return_value.__aenter__.return_value.post
+        assert (
+            post_mock.call_count == 1
+        )  # 400 is not retried (sync twin asserts this too)
+        errors = self._chunking_errors(caplog.records)
         assert errors, "expected an ERROR log naming chunking config"
         assert "extractive_content_spec" in errors[0].message
 
@@ -1120,3 +1183,14 @@ class TestShapeResults:
         sources = _shape_results(data, 8000)
         assert all(s.snippet for s in sources)
         assert all(len(s.snippet) == 1600 for s in sources)
+
+    def test_non_list_results_raises_value_error(self):
+        """A truthy non-sized ``results`` value must raise ValueError (the
+        callers' non-retryable path), not TypeError from len() — a TypeError
+        would be classified as transient and burn all retry attempts."""
+        with pytest.raises(ValueError, match="'results' field is not a list"):
+            _shape_results({"results": 5}, 8000)
+
+    def test_non_object_body_raises_value_error(self):
+        with pytest.raises(ValueError, match="not a JSON object"):
+            _shape_results(["not", "an", "object"], 8000)

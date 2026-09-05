@@ -292,22 +292,23 @@ class TestGreyCloudConfig:
 
     def test_config_extractive_content_spec_default_off(self):
         """extractive_content_spec defaults to False (snippets-only, the wire
-        behavior accepted by every datastore type)"""
-        import subprocess
+        behavior accepted by every datastore type). project_id is passed, so
+        the gcloud fallback in __post_init__ never runs and needs no mocking."""
+        config = GreyCloudConfig(project_id="test-project")
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(project_id="test-project")
-
-            assert config.extractive_content_spec is False
+        assert config.extractive_content_spec is False
 
     def test_config_extractive_content_spec_opt_in(self):
-        import subprocess
+        config = GreyCloudConfig(
+            project_id="test-project", extractive_content_spec=True
+        )
 
-        with patch.object(subprocess, "run") as mock_run:
-            mock_run.return_value.returncode = 0
-            config = GreyCloudConfig(
-                project_id="test-project", extractive_content_spec=True
-            )
+        assert config.extractive_content_spec is True
 
-            assert config.extractive_content_spec is True
+    def test_config_extractive_content_spec_rejects_non_bool(self):
+        """A truthy non-bool (e.g. the string "false") must be rejected, not
+        silently coerced: it would opt every search into extractiveContentSpec
+        while the caller believes the flag is off."""
+        for bad in ("false", "0", 1):
+            with pytest.raises(TypeError, match="extractive_content_spec"):
+                GreyCloudConfig(project_id="test-project", extractive_content_spec=bad)

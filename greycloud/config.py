@@ -78,8 +78,8 @@ class GreyCloudConfig:
     # passages. False (default) sends the snippets-only payload, which every
     # datastore type accepts — datastores built with chunking config reject
     # extractiveContentSpec with HTTP 400, so this is the caller's opt-in,
-    # not a library default (0.3.14 sent it unconditionally and broke every
-    # chunked datastore).
+    # not a library default (0.3.12–0.3.14 sent it unconditionally and broke
+    # every chunked datastore).
     extractive_content_spec: bool = False
 
     # Thinking config
@@ -132,3 +132,12 @@ class GreyCloudConfig:
 
         if self.min_grounding_query_chars < 0:
             raise ValueError("min_grounding_query_chars must be >= 0")
+
+        # Strict bool check: a truthy non-bool (e.g. the string "false") would
+        # silently opt every search into extractiveContentSpec and 400 on
+        # chunking-config datastores while the caller believes the flag is off.
+        if not isinstance(self.extractive_content_spec, bool):
+            raise TypeError(
+                "extractive_content_spec must be a bool; got "
+                f"{type(self.extractive_content_spec).__name__}"
+            )
