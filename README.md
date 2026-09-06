@@ -46,6 +46,10 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
   - Clear error messages that point to:
     - `gcloud auth application-default login`
     - IAM role requirements for impersonation
+  - Interactive browser login is **opt-in**: GreyCloud never spawns
+    `gcloud auth application-default login` unless you set
+    `auto_reauth=True` (or export `AUTO_REAUTH=1`). Error messages always
+    tell you when a manual login is needed.
 
 - **Config normalization**
   - A single dataclass (`GreyCloudConfig`) encapsulates:
