@@ -73,6 +73,10 @@ class GreyCloudAsyncClient:
         if not self.config.auto_reauth:
             return False
 
+        # Never spawn interactive browser auth from tests, even if opted in
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            return False
+
         is_interactive = (
             sys.stdin.isatty() if hasattr(sys.stdin, "isatty") else False
         ) or os.environ.get("DISPLAY") is not None

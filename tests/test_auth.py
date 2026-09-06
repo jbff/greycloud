@@ -128,9 +128,10 @@ class TestCreateClient:
             assert call_kwargs["credentials"] is not None
 
     @pytest.mark.auth
+    @patch("greycloud.auth._auto_reauth_allowed", return_value=True)
     @patch("greycloud.auth.HAS_GOOGLE_AUTH", True)
     @patch("greycloud.auth.google.auth")
-    def test_create_client_oauth_auto_reauth(self, mock_auth):
+    def test_create_client_oauth_auto_reauth(self, mock_auth, mock_allowed):
         """Test automatic re-authentication"""
         import subprocess
 
@@ -223,9 +224,10 @@ class TestCreateClient:
             assert http_options.api_version == "v2"
 
     @pytest.mark.auth
+    @patch("greycloud.auth._auto_reauth_allowed", return_value=True)
     @patch("greycloud.auth.HAS_GOOGLE_AUTH", True)
     @patch("greycloud.auth.google.auth")
-    def test_create_client_reauth_on_expired_error(self, mock_auth):
+    def test_create_client_reauth_on_expired_error(self, mock_auth, mock_allowed):
         """Test that 'expired' in error message triggers re-authentication.
 
         Google Auth errors like 'credentials expired' or 'Reauthentication is needed'
@@ -272,9 +274,12 @@ class TestCreateClient:
                     ), "Should retry after seeing 'expired' error"
 
     @pytest.mark.auth
+    @patch("greycloud.auth._auto_reauth_allowed", return_value=True)
     @patch("greycloud.auth.HAS_GOOGLE_AUTH", True)
     @patch("greycloud.auth.google.auth")
-    def test_create_client_reauth_on_reauthentication_is_needed_error(self, mock_auth):
+    def test_create_client_reauth_on_reauthentication_is_needed_error(
+        self, mock_auth, mock_allowed
+    ):
         """Test that 'Reauthentication is needed' error triggers re-authentication.
 
         This is a common Google Auth error message that should trigger auto re-auth.

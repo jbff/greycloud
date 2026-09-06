@@ -575,6 +575,24 @@ class TestGreyCloudAsyncClientAuthError:
             client = GreyCloudAsyncClient(config)
             assert client._force_reauth() is False
 
+    def test_force_reauth_blocked_under_pytest(self, async_sample_config):
+        """Interactive browser re-auth is never spawned under pytest.
+
+        Even with auto_reauth=True explicitly opted in, running under pytest
+        (PYTEST_CURRENT_TEST set) must never spawn gcloud browser login.
+        """
+        config = GreyCloudConfig(
+            project_id="test-project-id",
+            location="us-east4",
+            use_api_key=False,
+            auto_reauth=True,
+        )
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(config)
+            with patch("greycloud.async_client.subprocess.run") as mock_run:
+                assert client._force_reauth() is False
+                mock_run.assert_not_called()
+
     def test_force_reauth_allows_user_interaction(self, async_sample_config):
         """Force re-auth allows user to see gcloud prompts.
 
@@ -597,8 +615,10 @@ class TestGreyCloudAsyncClientAuthError:
             with patch("greycloud.async_client.subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
 
-                # Simulate interactive environment (has DISPLAY or TTY)
-                with patch.dict(os.environ, {"DISPLAY": ":0"}):
+                # Simulate interactive environment (has DISPLAY or TTY);
+                # clear the env (dropping PYTEST_CURRENT_TEST) so the
+                # never-under-pytest guard permits this mocked login path
+                with patch.dict(os.environ, {"DISPLAY": ":0"}, clear=True):
                     result = client._force_reauth()
 
                     assert result is True

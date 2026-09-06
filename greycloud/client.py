@@ -60,6 +60,10 @@ class GreyCloudClient:
         import sys
         import os
 
+        # Never spawn interactive browser auth from tests, even if opted in
+        if "PYTEST_CURRENT_TEST" in os.environ:
+            return False
+
         # Check if we're in an interactive environment (TTY available)
         # Also check for DISPLAY variable (X11) or if we're in a terminal
         is_interactive = (

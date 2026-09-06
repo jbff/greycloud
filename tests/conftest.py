@@ -11,6 +11,11 @@ os.environ.setdefault("LOCATION", "us-east4")
 os.environ.setdefault("GCP_PROJECT", "test-project-id")
 os.environ.setdefault("GCP_LOCATION", "us-east4")
 
+# Auto-reauth must never fire during tests: unset any AUTO_REAUTH the user
+# may have exported (auth.py additionally hard-blocks browser login under
+# pytest via the PYTEST_CURRENT_TEST guard).
+os.environ.pop("AUTO_REAUTH", None)
+
 
 @pytest.fixture
 def mock_genai_client():

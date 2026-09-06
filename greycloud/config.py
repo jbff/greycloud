@@ -34,7 +34,13 @@ class GreyCloudConfig:
     sa_email: Optional[str] = field(
         default_factory=lambda: os.environ.get("SA_EMAIL", None)
     )
-    auto_reauth: bool = True
+    # Opt-in only: never spawn interactive `gcloud auth application-default
+    # login` (browser popup) unless explicitly requested via AUTO_REAUTH env
+    # var or auto_reauth=True. Always off under pytest.
+    auto_reauth: bool = field(
+        default_factory=lambda: os.environ.get("AUTO_REAUTH", "").lower()
+        in ("1", "true", "yes")
+    )
 
     # Model configuration
     # Default to a generally available Gemini 3 flash model.

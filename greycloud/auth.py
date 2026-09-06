@@ -2,6 +2,7 @@
 Authentication utilities for GreyCloud
 """
 
+import os
 import subprocess
 import sys
 from typing import Optional
@@ -20,12 +21,24 @@ from google import genai
 from google.genai import types
 
 
+def _auto_reauth_allowed(auto_reauth: bool) -> bool:
+    """Whether spawning interactive browser re-auth is permitted.
+
+    Re-auth is opt-in (``auto_reauth=True``) and is never permitted while
+    running under pytest, so tests can never trigger
+    ``gcloud auth application-default login``.
+    """
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return False
+    return auto_reauth
+
+
 def get_credentials(
     project_id: str,
     sa_email: Optional[str] = None,
     use_api_key: bool = False,
     api_key_file: str = "GOOGLE_CLOUD_API_KEY",
-    auto_reauth: bool = True,
+    auto_reauth: bool = False,
 ):
     """Resolve Google credentials using the existing chain:
     ADC -> SA impersonation -> gcloud token -> auto-login.
@@ -114,7 +127,7 @@ def get_credentials(
                 error_output = e.stderr.decode("utf-8") if e.stderr else str(e)
                 error_str = error_output.lower()
 
-                if auto_reauth and (
+                if _auto_reauth_allowed(auto_reauth) and (
                     "application-default" in error_str
                     or "reauth" in error_str
                     or "login" in error_str
@@ -225,7 +238,7 @@ def create_client(
     api_key_file: str = "GOOGLE_CLOUD_API_KEY",
     endpoint: str = "https://aiplatform.googleapis.com",
     api_version: str = "v1",
-    auto_reauth: bool = True,
+    auto_reauth: bool = False,
 ) -> genai.Client:
     """
     Create and return a genai.Client with appropriate authentication

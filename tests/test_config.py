@@ -61,7 +61,8 @@ class TestGreyCloudConfig:
         assert config.max_output_tokens == 65535
         # Seed defaults to None (no fixed seed)
         assert config.seed is None
-        assert config.auto_reauth is True
+        # auto-reauth is opt-in (browser popup); default must be off
+        assert config.auto_reauth is False
         assert config.batch_location == "global"
         assert config.batch_poll_interval == 30
 
