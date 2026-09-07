@@ -1,5 +1,7 @@
 """Unit tests for GreyCloudClient"""
 
+import dataclasses
+
 import pytest
 from unittest.mock import patch, MagicMock
 from google.genai import types
@@ -1339,3 +1341,65 @@ class TestOnGroundingCallback:
         assert response is mock_generate_response
         assert ran == [["Doc1", "Doc2"]]
         assert failures == []
+
+
+class TestReauthBehavior:
+    """Opt-in interactive re-login, always-on non-interactive self-heal."""
+
+    def test_force_reauth_blocked_under_pytest(self, sample_config):
+        """Sync twin of the async guard test: even with auto_reauth=True,
+        pytest must never spawn gcloud browser login."""
+        config = dataclasses.replace(sample_config, auto_reauth=True)
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(config)
+            with patch("subprocess.run") as mock_run:
+                assert client._force_reauth() is False
+                mock_run.assert_not_called()
+
+    def test_auth_error_recovers_non_interactively_with_reauth_off(
+        self, sample_config, sample_contents, mock_generate_response
+    ):
+        """Default (auto_reauth off): an auth error mid-retry still gets the
+        non-interactive self-heal — the client is recreated (re-minting
+        credentials) with no interactive login spawn."""
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content.side_effect = [
+                Exception("401 Unauthorized"),
+                mock_generate_response,
+            ]
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+
+            with patch("time.sleep"):
+                with patch("subprocess.run") as mock_run:
+                    response = client.generate_with_retry(
+                        sample_contents, max_retries=3
+                    )
+
+            assert response == mock_generate_response
+            # construction + non-interactive recovery, nothing interactive
+            assert mock_create.call_count == 2
+            mock_run.assert_not_called()
+
+    def test_auth_error_exhausted_reports_disabled_interactive_reauth(
+        self, sample_config, sample_contents
+    ):
+        """When non-interactive recovery also fails and interactive re-login
+        is off, the exhausted error must say WHY re-auth didn't run instead
+        of claiming a re-auth was attempted."""
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content.side_effect = Exception(
+                "401 Unauthorized"
+            )
+            mock_create.side_effect = [mock_genai_client, RuntimeError("no creds")]
+
+            client = GreyCloudClient(sample_config)
+
+            with patch("time.sleep"):
+                with pytest.raises(
+                    RuntimeError, match="Interactive re-login is disabled"
+                ):
+                    client.generate_with_retry(sample_contents, max_retries=1)

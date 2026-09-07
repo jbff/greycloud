@@ -10,7 +10,7 @@ from google import genai
 from google.genai import types
 
 from .config import GreyCloudConfig
-from .auth import create_client
+from .auth import create_client, _auto_reauth_allowed, is_auth_error_message
 from .grounding import (
     GroundingSource,
     build_grounding_context,
@@ -53,15 +53,13 @@ class GreyCloudClient:
             # API key auth doesn't need re-authentication
             return False
 
-        if not self.config.auto_reauth:
-            return False
-
         import subprocess
         import sys
         import os
 
-        # Never spawn interactive browser auth from tests, even if opted in
-        if "PYTEST_CURRENT_TEST" in os.environ:
+        # Interactive login is opt-in and never permitted under pytest —
+        # single gate shared with auth.get_credentials.
+        if not _auto_reauth_allowed(self.config.auto_reauth):
             return False
 
         # Check if we're in an interactive environment (TTY available)
@@ -172,12 +170,7 @@ class GreyCloudClient:
         except RuntimeError as e:
             # If authentication fails and auto_reauth is enabled, try automatic re-authentication
             if self.config.auto_reauth and not self.config.use_api_key:
-                error_str = str(e).lower()
-                if (
-                    "application-default" in error_str
-                    or "reauth" in error_str
-                    or "login" in error_str
-                ):
+                if is_reauth_trigger(str(e).lower()):
                     # Try to automatically run gcloud auth application-default login
                     if self._force_reauth():
                         # Retry creating client after re-authentication
@@ -205,6 +198,24 @@ class GreyCloudClient:
         if self._client is None:
             self._authenticate()
         return self._client
+
+    def _recreate_client(self, auto_reauth: bool) -> None:
+        """Create and install a fresh underlying client (retry-time path).
+
+        Retry-time recreation always passes ``auto_reauth=False`` so
+        get_credentials' interactive login can never spawn from inside the
+        retry loop (mirrors the async client).
+        """
+        self._client = create_client(
+            project_id=self.config.project_id,
+            location=self.config.location,
+            sa_email=self.config.sa_email,
+            use_api_key=self.config.use_api_key,
+            api_key_file=self.config.api_key_file,
+            endpoint=self.config.endpoint,
+            api_version=self.config.api_version,
+            auto_reauth=auto_reauth,
+        )
 
     def _build_tools(self) -> List[types.Tool]:
         """Build tools list based on configuration.
@@ -731,29 +742,9 @@ class GreyCloudClient:
             error_type = type(err).__name__.lower()
             combined_error = f"{error_str} {error_repr} {error_type}"
 
-            auth_keywords = [
-                "401",
-                "unauthorized",
-                "403",
-                "forbidden",
-                "authentication",
-                "credential",
-                "token expired",
-                "token invalid",
-                "invalid token",
-                "expired token",
-                "unauthenticated",
-                "permission denied",
-                "reauth",
-                "reauthentication",
-                "application-default",
-                "gcloud auth application-default login",
-                "invalid_grant",  # OAuth error
-                "invalid_credentials",
-                "access_denied",
-                "insufficient_permission",
-            ]
-            if any(keyword in combined_error for keyword in auth_keywords):
+            # Shared marker list (auth.AUTH_ERROR_MARKERS) — single source of
+            # truth shared with the async client and get_credentials.
+            if is_auth_error_message(combined_error):
                 return True
 
         return False
@@ -815,21 +806,21 @@ class GreyCloudClient:
                 is_auth_error = self._is_authentication_error(e)
 
                 if is_auth_error:
-                    if self.config.auto_reauth and not self.config.use_api_key:
-                        # Force re-authentication by calling gcloud auth application-default login
-                        # This refreshes the credentials before recreating the client
+                    if not self.config.use_api_key:
                         reauth_success = False
                         try:
-                            # Try to force re-authentication
-                            reauth_success = self._force_reauth()
-                            if reauth_success:
-                                # Recreate the client with fresh credentials
-                                self._authenticate(force_reauth=False)
-                            else:
-                                # Re-auth command failed, but try recreating client anyway
-                                # (credentials might have been refreshed externally)
+                            if _auto_reauth_allowed(self.config.auto_reauth):
+                                # Opt-in interactive recovery (browser login);
+                                # never under pytest (see _auto_reauth_allowed).
+                                reauth_success = self._force_reauth()
+                            if not reauth_success:
+                                # Non-interactive self-heal: re-mint credentials
+                                # by recreating the client (get_credentials
+                                # re-runs the ADC/refresh chain). Runs even with
+                                # auto_reauth off; auto_reauth=False keeps a
+                                # nested interactive login out of the retry loop.
                                 try:
-                                    self._authenticate(force_reauth=False)
+                                    self._recreate_client(auto_reauth=False)
                                     reauth_success = True  # Client creation succeeded
                                 except Exception:
                                     pass  # Will be handled below
@@ -842,6 +833,7 @@ class GreyCloudClient:
                                 # Re-auth failed and we're out of retries
                                 raise RuntimeError(
                                     f"Authentication error detected and automatic re-authentication failed after {max_retries + 1} attempts. "
+                                    "Interactive re-login is disabled (auto_reauth=False, AUTO_REAUTH unset, or running under pytest). "
                                     "Please run 'gcloud auth application-default login' manually to refresh your credentials. "
                                     f"Original error: {str(e)}"
                                 ) from e
@@ -859,11 +851,11 @@ class GreyCloudClient:
                             # If re-auth failed but we have retries left, continue to exponential backoff
                             # This allows the retry mechanism to potentially work if credentials refresh in the background
                     else:
-                        # Auth error detected but auto_reauth is disabled or using API key
+                        # Auth error detected while using API-key auth, which has no re-authentication
                         if attempt >= max_retries:
                             raise RuntimeError(
-                                f"Authentication error detected but auto_reauth is disabled. "
-                                "Please run 'gcloud auth application-default login' manually. "
+                                f"Authentication error detected with use_api_key=True "
+                                "(API-key auth has no re-authentication). "
                                 f"Original error: {str(e)}"
                             ) from e
 

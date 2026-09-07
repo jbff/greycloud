@@ -519,6 +519,8 @@ client = create_client(
 )
 ```
 
+Note: `create_client` never spawns an interactive `gcloud auth application-default login` unless you pass `auto_reauth=True` (or export `AUTO_REAUTH=1`) — see [§2](#2-why-use-greycloud-instead-of-google-genai-directly).
+
 ---
 
 ## Documentation

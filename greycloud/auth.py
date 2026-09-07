@@ -22,15 +22,65 @@ from google.genai import types
 
 
 def _auto_reauth_allowed(auto_reauth: bool) -> bool:
-    """Whether spawning interactive browser re-auth is permitted.
+    """Whether spawning *interactive* browser re-auth is permitted.
 
-    Re-auth is opt-in (``auto_reauth=True``) and is never permitted while
-    running under pytest, so tests can never trigger
-    ``gcloud auth application-default login``.
+    Interactive login (``gcloud auth application-default login``) is opt-in
+    (``auto_reauth=True`` / ``AUTO_REAUTH=1``) and is never permitted while
+    running under pytest, so tests can never trigger it. Non-interactive
+    credential recovery (re-minting tokens, recreating clients) is not
+    gated by this — see the clients' retry-time recovery paths.
     """
     if "PYTEST_CURRENT_TEST" in os.environ:
         return False
     return auto_reauth
+
+
+# Substrings that identify a credential failure recoverable by (re-)login.
+# Single source of truth for get_credentials' gcloud-fallback gate and the
+# clients' auth-error detection, which were previously hand-maintained
+# copies that had already drifted (e.g. "expired" missing from the sync
+# client's list).
+REAUTH_TRIGGER_MARKERS = (
+    "application-default",
+    "reauth",
+    "login",
+    "expired",
+)
+
+
+def is_reauth_trigger(error_str: str) -> bool:
+    """True when a (lowercased) error string says a re-login would help."""
+    return any(marker in error_str for marker in REAUTH_TRIGGER_MARKERS)
+
+
+AUTH_ERROR_MARKERS = (
+    "401",
+    "unauthorized",
+    "403",
+    "forbidden",
+    "authentication",
+    "credential",
+    "token expired",
+    "token invalid",
+    "invalid token",
+    "expired token",
+    "expired",
+    "unauthenticated",
+    "permission denied",
+    "reauth",
+    "reauthentication",
+    "application-default",
+    "gcloud auth application-default login",
+    "invalid_grant",  # OAuth error
+    "invalid_credentials",
+    "access_denied",
+    "insufficient_permission",
+)
+
+
+def is_auth_error_message(combined_error: str) -> bool:
+    """True when an error's string form looks authentication-related."""
+    return any(marker in combined_error for marker in AUTH_ERROR_MARKERS)
 
 
 def get_credentials(
@@ -41,9 +91,14 @@ def get_credentials(
     auto_reauth: bool = False,
 ):
     """Resolve Google credentials using the existing chain:
-    ADC -> SA impersonation -> gcloud token -> auto-login.
+    ADC -> SA impersonation -> gcloud token -> (opt-in) interactive login.
     Returns an API key string when use_api_key=True, else a google-auth
     Credentials object (same objects create_client uses today).
+
+    The final interactive ``gcloud auth application-default login`` step
+    runs only when ``auto_reauth=True`` and never under pytest; by default
+    a failed gcloud fallback raises and the error message directs the
+    caller to log in manually.
     """
     if use_api_key:
         try:
@@ -124,15 +179,17 @@ def get_credentials(
                     ).strip()
             except subprocess.CalledProcessError as e:
                 # Check if this is an authentication error that requires re-login
-                error_output = e.stderr.decode("utf-8") if e.stderr else str(e)
+                # text=True means gcloud's stderr is usually already a str;
+                # tolerate bytes for robustness (hand-built exceptions).
+                if e.stderr is None:
+                    error_output = str(e)
+                elif isinstance(e.stderr, bytes):
+                    error_output = e.stderr.decode("utf-8", "replace")
+                else:
+                    error_output = e.stderr
                 error_str = error_output.lower()
 
-                if _auto_reauth_allowed(auto_reauth) and (
-                    "application-default" in error_str
-                    or "reauth" in error_str
-                    or "login" in error_str
-                    or "expired" in error_str
-                ):
+                if _auto_reauth_allowed(auto_reauth) and is_reauth_trigger(error_str):
                     # Try to automatically run gcloud auth application-default login
                     try:
                         # Note: This will require user interaction (browser) if not already authenticated

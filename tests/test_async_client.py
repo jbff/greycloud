@@ -615,10 +615,14 @@ class TestGreyCloudAsyncClientAuthError:
             with patch("greycloud.async_client.subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
 
-                # Simulate interactive environment (has DISPLAY or TTY);
-                # clear the env (dropping PYTEST_CURRENT_TEST) so the
-                # never-under-pytest guard permits this mocked login path
-                with patch.dict(os.environ, {"DISPLAY": ":0"}, clear=True):
+                # Patch the shared gate (instead of nuking the whole
+                # environment) so the mocked interactive login path runs.
+                with (
+                    patch(
+                        "greycloud.async_client._auto_reauth_allowed", return_value=True
+                    ),
+                    patch.dict(os.environ, {"DISPLAY": ":0"}),
+                ):
                     result = client._force_reauth()
 
                     assert result is True
@@ -657,29 +661,36 @@ class TestGreyCloudAsyncClientAuthError:
             with patch("greycloud.async_client.subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
 
-                # Simulate non-interactive environment (no DISPLAY, no TTY)
-                with patch.dict(os.environ, {}, clear=True):
-                    with patch("sys.stdin") as mock_stdin:
-                        mock_stdin.isatty.return_value = False
-                        result = client._force_reauth()
+                # Patch the shared gate instead of wiping the environment;
+                # drop DISPLAY only (targeted, not a full env nuke)
+                env = {k: v for k, v in os.environ.items() if k != "DISPLAY"}
+                with (
+                    patch(
+                        "greycloud.async_client._auto_reauth_allowed", return_value=True
+                    ),
+                    patch.dict(os.environ, env, clear=True),
+                    patch("sys.stdin") as mock_stdin,
+                ):
+                    mock_stdin.isatty.return_value = False
+                    result = client._force_reauth()
 
-                        assert result is True
-                        mock_run.assert_called_once()
-                        call_args = mock_run.call_args
-                        cmd = call_args[0][0]
+                    assert result is True
+                    mock_run.assert_called_once()
+                    call_args = mock_run.call_args
+                    cmd = call_args[0][0]
 
-                        # Should use --no-browser in non-interactive mode
-                        assert (
-                            "--no-browser" in cmd
-                        ), "Should use --no-browser in non-interactive mode"
-                        # Should NOT use --quiet
-                        assert (
-                            "--quiet" not in cmd
-                        ), "Should NOT use --quiet even in non-interactive mode"
-                        # capture_output should be False
-                        assert (
-                            call_args[1].get("capture_output") is False
-                        ), "capture_output should be False"
+                    # Should use --no-browser in non-interactive mode
+                    assert (
+                        "--no-browser" in cmd
+                    ), "Should use --no-browser in non-interactive mode"
+                    # Should NOT use --quiet
+                    assert (
+                        "--quiet" not in cmd
+                    ), "Should NOT use --quiet even in non-interactive mode"
+                    # capture_output should be False
+                    assert (
+                        call_args[1].get("capture_output") is False
+                    ), "capture_output should be False"
 
 
 DATASTORE = "projects/test/locations/us/datastores/test-ds"
@@ -1508,3 +1519,55 @@ class TestOnGroundingCallback:
                 )
 
         assert len(seen) == 2
+
+
+class TestReauthBehavior:
+    """Opt-in interactive re-login, always-on non-interactive self-heal."""
+
+    @pytest.mark.asyncio
+    async def test_auth_error_recovers_non_interactively_with_reauth_off(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """Async twin of the sync recovery test: default (auto_reauth off)
+        still re-mints credentials non-interactively on an auth error."""
+        mock_async_genai_client.aio.models.generate_content.side_effect = [
+            RuntimeError("401 Unauthorized"),
+            MagicMock(text="Success"),
+        ]
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ) as mock_create:
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            with patch("asyncio.sleep"):
+                with patch("greycloud.async_client.subprocess.run") as mock_run:
+                    result = await client.generate_with_retry(contents, max_retries=3)
+
+            assert result.text == "Success"
+            # construction + non-interactive recovery, nothing interactive
+            assert mock_create.call_count == 2
+            mock_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auth_error_exhausted_reports_disabled_interactive_reauth(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """Async twin of the sync message test."""
+        mock_async_genai_client.aio.models.generate_content.side_effect = RuntimeError(
+            "401 Unauthorized"
+        )
+        with patch(
+            "greycloud.async_client.create_client",
+            side_effect=[mock_async_genai_client, RuntimeError("no creds")],
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            with patch("asyncio.sleep"):
+                with pytest.raises(
+                    RuntimeError, match="Interactive re-login is disabled"
+                ):
+                    await client.generate_with_retry(contents, max_retries=1)

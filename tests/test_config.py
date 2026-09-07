@@ -148,6 +148,30 @@ class TestGreyCloudConfig:
             config = GreyCloudConfig(project_id="test-project")
             assert config.sa_email == "env-sa@project.iam.gserviceaccount.com"
 
+    @pytest.mark.parametrize("value", ["1", "true", "yes", "TRUE"])
+    def test_config_auto_reauth_from_env(self, value):
+        """AUTO_REAUTH env opt-in parses like USE_API_KEY (shared _env_bool)"""
+        with patch.dict(os.environ, {"AUTO_REAUTH": value}):
+            config = GreyCloudConfig(project_id="test-project")
+
+            assert config.auto_reauth is True
+
+    def test_config_auto_reauth_default_off(self):
+        config = GreyCloudConfig(project_id="test-project")
+
+        assert config.auto_reauth is False
+
+    @pytest.mark.parametrize("bad", ["false", "0", 1])
+    def test_config_auto_reauth_rejects_non_bool(self, bad):
+        """A truthy non-bool would enable browser re-login while the caller
+        believes the flag is off (same hazard class as extractive_content_spec)."""
+        with pytest.raises(TypeError, match="auto_reauth"):
+            GreyCloudConfig(project_id="test-project", auto_reauth=bad)
+
+    def test_config_use_api_key_rejects_non_bool(self):
+        with pytest.raises(TypeError, match="use_api_key"):
+            GreyCloudConfig(project_id="test-project", use_api_key="true")
+
     def test_config_use_api_key_from_env(self):
         """Test use_api_key from environment variable"""
 

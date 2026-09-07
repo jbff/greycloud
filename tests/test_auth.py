@@ -3,7 +3,15 @@
 import subprocess
 import pytest
 from unittest.mock import patch, MagicMock, mock_open
-from greycloud.auth import create_client, HAS_GOOGLE_AUTH
+import os
+
+from greycloud.auth import (
+    create_client,
+    get_credentials,
+    HAS_GOOGLE_AUTH,
+    _auto_reauth_allowed,
+    is_reauth_trigger,
+)
 
 
 class TestCreateClient:
@@ -325,3 +333,40 @@ class TestCreateClient:
                     assert (
                         call_count[0] >= 2
                     ), "Should retry after seeing 'Reauthentication is needed' error"
+
+
+class TestAutoReauthGate:
+    """The real body of _auto_reauth_allowed (other tests patch it out)."""
+
+    def test_returns_flag_when_not_under_pytest(self):
+        env = {k: v for k, v in os.environ.items() if k != "PYTEST_CURRENT_TEST"}
+        with patch.dict(os.environ, env, clear=True):
+            assert _auto_reauth_allowed(True) is True
+            assert _auto_reauth_allowed(False) is False
+
+    def test_never_allows_under_pytest(self):
+        # This test runs under pytest, so PYTEST_CURRENT_TEST is set.
+        assert _auto_reauth_allowed(True) is False
+
+    def test_reauth_trigger_markers(self):
+        assert is_reauth_trigger("your credentials have expired")
+        assert is_reauth_trigger("reauthentication is needed")
+        assert is_reauth_trigger("gcloud auth application-default login")
+        assert not is_reauth_trigger("quota exceeded")
+
+    @patch("greycloud.auth.HAS_GOOGLE_AUTH", True)
+    @patch("greycloud.auth.google.auth")
+    def test_gcloud_fallback_str_stderr_raises_runtime_error(self, mock_auth):
+        """CalledProcessError under text=True carries stderr as a str; the
+        old e.stderr.decode() raised AttributeError inside the except
+        handler, escaping get_credentials and making the opt-in reauth gate
+        unreachable."""
+        error = subprocess.CalledProcessError(
+            1,
+            "gcloud",
+            stderr="Your credentials have expired. Run gcloud auth application-default login",
+        )
+        mock_auth.default.side_effect = Exception("No credentials")
+        with patch("greycloud.auth.subprocess.check_output", side_effect=error):
+            with pytest.raises(RuntimeError, match="Failed to acquire OAuth"):
+                get_credentials(project_id="test-project", auto_reauth=False)

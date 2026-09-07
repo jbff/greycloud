@@ -131,7 +131,7 @@ Quality and reliability are maintained through a strict test-driven development 
 The logic is contained within five main modules in `greycloud/`:
 
 - **`config.py`** - `GreyCloudConfig` dataclass: Centralizes all configuration (auth, generation params, batch settings). Reads from environment variables with sensible defaults.
-- **`auth.py`** - `create_client()` factory: Creates authenticated `genai.Client` instances. Supports API key auth or OAuth. Fallback chain: default credentials → SA impersonation → gcloud CLI → auto-login prompt.
+- **`auth.py`** - `create_client()` factory: Creates authenticated `genai.Client` instances. Supports API key auth or OAuth. Fallback chain: default credentials → SA impersonation → gcloud CLI → (opt-in) interactive login (`auto_reauth=True` / `AUTO_REAUTH=1`; browser login is additionally hard-blocked under pytest).
 - **`client.py`** - `GreyCloudClient`: Main interface for content generation. Implements `generate_with_retry()` (exponential backoff with re-auth) and `count_tokens()` (with character-based fallback).
 - **`cache.py`** - `GreyCloudCache`: Context caching utilities. Provides methods for creating/managing caches from text or files. Note: Provides 75-90% discount on cached input tokens.
 - **`batch.py`** - `GreyCloudBatch`: Batch job utilities handling GCS upload/download and JSONL job monitoring.

@@ -18,7 +18,7 @@ from google import genai
 from google.genai import types
 
 from .config import GreyCloudConfig
-from .auth import create_client
+from .auth import create_client, _auto_reauth_allowed, is_auth_error_message
 from .rate_limiter import VertexRateLimiter
 from .grounding import (
     GroundingSource,
@@ -70,11 +70,9 @@ class GreyCloudAsyncClient:
         if self.config.use_api_key:
             return False
 
-        if not self.config.auto_reauth:
-            return False
-
-        # Never spawn interactive browser auth from tests, even if opted in
-        if "PYTEST_CURRENT_TEST" in os.environ:
+        # Interactive login is opt-in and never permitted under pytest —
+        # single gate shared with auth.get_credentials and the sync client.
+        if not _auto_reauth_allowed(self.config.auto_reauth):
             return False
 
         is_interactive = (
@@ -171,30 +169,9 @@ class GreyCloudAsyncClient:
             error_type = type(err).__name__.lower()
             combined_error = f"{error_str} {error_repr} {error_type}"
 
-            auth_keywords = [
-                "401",
-                "unauthorized",
-                "403",
-                "forbidden",
-                "authentication",
-                "credential",
-                "token expired",
-                "token invalid",
-                "invalid token",
-                "expired token",
-                "expired",
-                "unauthenticated",
-                "permission denied",
-                "reauth",
-                "reauthentication",
-                "application-default",
-                "gcloud auth application-default login",
-                "invalid_grant",
-                "invalid_credentials",
-                "access_denied",
-                "insufficient_permission",
-            ]
-            if any(keyword in combined_error for keyword in auth_keywords):
+            # Shared marker list (auth.AUTH_ERROR_MARKERS) shared with the
+            # sync client and get_credentials.
+            if is_auth_error_message(combined_error):
                 return True
 
         return False
@@ -638,11 +615,21 @@ class GreyCloudAsyncClient:
                 is_auth_error = self._is_authentication_error(e)
 
                 if is_auth_error:
-                    if self.config.auto_reauth and not self.config.use_api_key:
+                    if not self.config.use_api_key:
                         reauth_success = False
                         try:
-                            reauth_success = self._force_reauth()
-                            if reauth_success:
+                            if _auto_reauth_allowed(self.config.auto_reauth):
+                                # Opt-in interactive recovery (browser login),
+                                # never under pytest; run off the event loop.
+                                reauth_success = await asyncio.to_thread(
+                                    self._force_reauth
+                                )
+                            # Non-interactive self-heal: re-mint credentials
+                            # by recreating the client (get_credentials
+                            # re-runs the ADC/refresh chain). Runs even with
+                            # auto_reauth off; auto_reauth=False keeps a
+                            # nested interactive login out of the retry loop.
+                            try:
                                 self._client = create_client(
                                     project_id=self.config.project_id,
                                     location=self.config.location,
@@ -653,28 +640,17 @@ class GreyCloudAsyncClient:
                                     api_version=self.config.api_version,
                                     auto_reauth=False,
                                 )
-                            else:
-                                try:
-                                    self._client = create_client(
-                                        project_id=self.config.project_id,
-                                        location=self.config.location,
-                                        sa_email=self.config.sa_email,
-                                        use_api_key=self.config.use_api_key,
-                                        api_key_file=self.config.api_key_file,
-                                        endpoint=self.config.endpoint,
-                                        api_version=self.config.api_version,
-                                        auto_reauth=False,
-                                    )
-                                    reauth_success = True
-                                except Exception:
-                                    pass
+                                reauth_success = True
+                            except Exception:
+                                pass
 
                             if reauth_success and attempt < max_retries:
-                                time.sleep(1)
+                                await asyncio.sleep(1)
                                 continue
                             elif not reauth_success and attempt >= max_retries:
                                 raise RuntimeError(
                                     f"Authentication error detected and automatic re-authentication failed after {max_retries + 1} attempts. "
+                                    "Interactive re-login is disabled (auto_reauth=False, AUTO_REAUTH unset, or running under pytest). "
                                     "Please run 'gcloud auth application-default login' manually to refresh your credentials. "
                                     f"Original error: {str(e)}"
                                 ) from e
@@ -716,11 +692,21 @@ class GreyCloudAsyncClient:
                 is_auth_error = self._is_authentication_error(e)
 
                 if is_auth_error:
-                    if self.config.auto_reauth and not self.config.use_api_key:
+                    if not self.config.use_api_key:
                         reauth_success = False
                         try:
-                            reauth_success = self._force_reauth()
-                            if reauth_success:
+                            if _auto_reauth_allowed(self.config.auto_reauth):
+                                # Opt-in interactive recovery (browser login),
+                                # never under pytest; run off the event loop.
+                                reauth_success = await asyncio.to_thread(
+                                    self._force_reauth
+                                )
+                            # Non-interactive self-heal: re-mint credentials
+                            # by recreating the client (get_credentials
+                            # re-runs the ADC/refresh chain). Runs even with
+                            # auto_reauth off; auto_reauth=False keeps a
+                            # nested interactive login out of the retry loop.
+                            try:
                                 self._client = create_client(
                                     project_id=self.config.project_id,
                                     location=self.config.location,
@@ -731,28 +717,17 @@ class GreyCloudAsyncClient:
                                     api_version=self.config.api_version,
                                     auto_reauth=False,
                                 )
-                            else:
-                                try:
-                                    self._client = create_client(
-                                        project_id=self.config.project_id,
-                                        location=self.config.location,
-                                        sa_email=self.config.sa_email,
-                                        use_api_key=self.config.use_api_key,
-                                        api_key_file=self.config.api_key_file,
-                                        endpoint=self.config.endpoint,
-                                        api_version=self.config.api_version,
-                                        auto_reauth=False,
-                                    )
-                                    reauth_success = True
-                                except Exception:
-                                    pass
+                                reauth_success = True
+                            except Exception:
+                                pass
 
                             if reauth_success and attempt < max_retries:
-                                time.sleep(1)
+                                await asyncio.sleep(1)
                                 continue
                             elif not reauth_success and attempt >= max_retries:
                                 raise RuntimeError(
                                     f"Authentication error detected and automatic re-authentication failed after {max_retries + 1} attempts. "
+                                    "Interactive re-login is disabled (auto_reauth=False, AUTO_REAUTH unset, or running under pytest). "
                                     "Please run 'gcloud auth application-default login' manually to refresh your credentials. "
                                     f"Original error: {str(e)}"
                                 ) from e

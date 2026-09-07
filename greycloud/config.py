@@ -7,6 +7,15 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 
 
+def _env_bool(name: str) -> bool:
+    """Read an opt-in boolean environment variable.
+
+    Shared by the env-driven bool flags so their acceptance semantics
+    (``1``/``true``/``yes``, case-insensitive) stay in sync.
+    """
+    return os.environ.get(name, "").lower() in ("1", "true", "yes")
+
+
 @dataclass
 class GreyCloudConfig:
     """Configuration for GreyCloud client"""
@@ -24,10 +33,7 @@ class GreyCloudConfig:
     )
 
     # Authentication
-    use_api_key: bool = field(
-        default_factory=lambda: os.environ.get("USE_API_KEY", "").lower()
-        in ("1", "true", "yes")
-    )
+    use_api_key: bool = field(default_factory=lambda: _env_bool("USE_API_KEY"))
     api_key_file: str = field(
         default_factory=lambda: os.environ.get("API_KEY_FILE", "GOOGLE_CLOUD_API_KEY")
     )
@@ -37,10 +43,7 @@ class GreyCloudConfig:
     # Opt-in only: never spawn interactive `gcloud auth application-default
     # login` (browser popup) unless explicitly requested via AUTO_REAUTH env
     # var or auto_reauth=True. Always off under pytest.
-    auto_reauth: bool = field(
-        default_factory=lambda: os.environ.get("AUTO_REAUTH", "").lower()
-        in ("1", "true", "yes")
-    )
+    auto_reauth: bool = field(default_factory=lambda: _env_bool("AUTO_REAUTH"))
 
     # Model configuration
     # Default to a generally available Gemini 3 flash model.
@@ -139,11 +142,14 @@ class GreyCloudConfig:
         if self.min_grounding_query_chars < 0:
             raise ValueError("min_grounding_query_chars must be >= 0")
 
-        # Strict bool check: a truthy non-bool (e.g. the string "false") would
-        # silently opt every search into extractiveContentSpec and 400 on
-        # chunking-config datastores while the caller believes the flag is off.
-        if not isinstance(self.extractive_content_spec, bool):
-            raise TypeError(
-                "extractive_content_spec must be a bool; got "
-                f"{type(self.extractive_content_spec).__name__}"
-            )
+        # Strict bool checks: a truthy non-bool (e.g. the string "false") is
+        # dangerous in both directions — it would silently opt every search
+        # into extractiveContentSpec (400 on chunking-config datastores), or
+        # silently enable interactive browser re-login while the caller
+        # believes the flag is off.
+        for bool_field in ("extractive_content_spec", "use_api_key", "auto_reauth"):
+            value = getattr(self, bool_field)
+            if not isinstance(value, bool):
+                raise TypeError(
+                    f"{bool_field} must be a bool; got {type(value).__name__}"
+                )

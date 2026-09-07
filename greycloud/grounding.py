@@ -331,7 +331,7 @@ def _build_headers(config: GreyCloudConfig) -> Tuple[Optional[dict], Optional[st
             sa_email=getattr(config, "sa_email", None),
             use_api_key=bool(getattr(config, "use_api_key", False)),
             api_key_file=getattr(config, "api_key_file", "GOOGLE_CLOUD_API_KEY"),
-            auto_reauth=bool(getattr(config, "auto_reauth", True)),
+            auto_reauth=bool(getattr(config, "auto_reauth", False)),
         )
     except Exception as e:  # noqa: BLE001 - must never raise to the caller
         return None, f"failed to resolve credentials: {e}"
