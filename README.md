@@ -46,6 +46,7 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
   - Clear error messages that point to:
     - `gcloud auth application-default login`
     - IAM role requirements for impersonation
+  - **Changelog note (0.4.0):** `auto_reauth` now defaults to `False` (previously `True`) — a credential error no longer spawns the interactive `gcloud auth application-default login` browser flow unless you opt in via `auto_reauth=True` or `AUTO_REAUTH=1`. Non-interactive credential recovery still runs automatically on retry-time auth errors. Interactive login is additionally hard-blocked while running under pytest.
   - Interactive browser login is **opt-in**: GreyCloud never spawns
     `gcloud auth application-default login` unless you set
     `auto_reauth=True` (or export `AUTO_REAUTH=1`). Error messages always
