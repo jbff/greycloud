@@ -44,7 +44,16 @@ class VertexRateLimiter:
             Whatever the underlying API call raises.
         """
         await self._rpm_limiter.acquire()
-        await self._tpm_limiter.acquire(prompt_tokens_est)
+        # Clamp the TPM acquisition to the bucket capacity: a single request
+        # cannot be split, so one whose estimate exceeds the per-minute budget
+        # must still go through (it waits for a fresh window at worst) rather
+        # than being categorically rejected. Without the clamp, any request
+        # estimated above `tpm` — e.g. long-context prompts carrying a large
+        # injected knowledge block — raises aiolimiter's
+        # "Can't acquire more than the maximum capacity" ValueError on every
+        # attempt and the client retries until the caller gives up. The
+        # server's real TPM quota is enforced by Vertex itself.
+        await self._tpm_limiter.acquire(min(prompt_tokens_est, self.tpm))
         async with self._semaphore:
             return await api_call_coro
 
