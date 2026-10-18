@@ -20,6 +20,26 @@ except ImportError:
 from google import genai
 from google.genai import types
 
+_GLOBAL_ENDPOINT = "https://aiplatform.googleapis.com"
+
+
+def endpoint_for_location(location: Optional[str]) -> str:
+    """Return the Vertex AI API base URL for ``location``.
+
+    Multi-regions use the ``aiplatform.{loc}.rep`` hosts, every real region
+    uses ``https://{region}-aiplatform.googleapis.com``, and ``global`` keeps
+    the classic host. ``create_client`` derives the endpoint from the
+    configured location so request traffic stays on the host the caller
+    asked for instead of silently defaulting to the global endpoint (which
+    is a data-residency violation for PHI deployments).
+    """
+    loc = (location or "global").strip().lower()
+    if loc == "global":
+        return _GLOBAL_ENDPOINT
+    if loc in ("us", "eu"):
+        return f"https://aiplatform.{loc}.rep.googleapis.com"
+    return f"https://{loc}-aiplatform.googleapis.com"
+
 
 def _auto_reauth_allowed(auto_reauth: bool) -> bool:
     """Whether spawning *interactive* browser re-auth is permitted.
@@ -318,6 +338,14 @@ def create_client(
         ImportError: If google-auth not available and not using API key
         RuntimeError: If authentication fails
     """
+    # The endpoint follows the configured location by default. The
+    # pre-0.4.3 behavior of always using the global host silently overrode
+    # LOCATION on every model request, which is a data-residency violation
+    # for regional/multi-regional locations. An explicit non-default
+    # endpoint (GreyCloudConfig.endpoint) is still honored as-is.
+    if endpoint in ("", _GLOBAL_ENDPOINT):
+        endpoint = endpoint_for_location(location)
+
     if use_api_key:
         api_key = get_credentials(
             project_id=project_id,

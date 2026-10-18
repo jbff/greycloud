@@ -47,6 +47,7 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
     - `gcloud auth application-default login`
     - IAM role requirements for impersonation
   - **Changelog note (0.4.0):** `auto_reauth` now defaults to `False` (previously `True`) — a credential error no longer spawns the interactive `gcloud auth application-default login` browser flow unless you opt in via `auto_reauth=True` or `AUTO_REAUTH=1`. Non-interactive credential recovery still runs automatically on retry-time auth errors. Interactive login is additionally hard-blocked while running under pytest.
+  - **Changelog note (0.4.3):** **The API endpoint now follows the configured location** (`auth.endpoint_for_location`): `global` keeps `https://aiplatform.googleapis.com`, multi-regions use `https://aiplatform.{loc}.rep.googleapis.com`, and real regions use `https://{region}-aiplatform.googleapis.com`. Pre-0.4.3 always sent model traffic to the global host regardless of `LOCATION`, silently defeating regional/multi-regional data residency (e.g. for `gemini-4-argon`, which serves `us`/`eu` via the rep hosts). An explicit non-default `GreyCloudConfig.endpoint` is still honored verbatim. Batch polling clients (global by design) are unaffected.
   - Interactive browser login is **opt-in**: GreyCloud never spawns
     `gcloud auth application-default login` unless you set
     `auto_reauth=True` (or export `AUTO_REAUTH=1`). Error messages always

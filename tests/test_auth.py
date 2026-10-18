@@ -7,6 +7,7 @@ import os
 
 from greycloud.auth import (
     create_client,
+    endpoint_for_location,
     get_credentials,
     HAS_GOOGLE_AUTH,
     _auto_reauth_allowed,
@@ -206,6 +207,67 @@ class TestCreateClient:
             mock_genai.Client.assert_called_once()
             call_kwargs = mock_genai.Client.call_args[1]
             assert call_kwargs["credentials"] == mock_source_creds
+
+    @pytest.mark.auth
+    @pytest.mark.parametrize(
+        ("location", "expected_base_url"),
+        [
+            ("global", "https://aiplatform.googleapis.com"),
+            ("us", "https://aiplatform.us.rep.googleapis.com"),
+            ("eu", "https://aiplatform.eu.rep.googleapis.com"),
+            ("us-central1", "https://us-central1-aiplatform.googleapis.com"),
+            ("europe-west4", "https://europe-west4-aiplatform.googleapis.com"),
+            ("US", "https://aiplatform.us.rep.googleapis.com"),
+        ],
+    )
+    def test_endpoint_for_location(self, location, expected_base_url):
+        """The API host follows the configured location exactly."""
+        assert endpoint_for_location(location) == expected_base_url
+
+    @pytest.mark.auth
+    def test_create_client_default_endpoint_follows_location(self, tmp_path):
+        """create_client must derive the host from ``location`` — the global
+        host is never silently substituted (pre-0.4.3 bug: model traffic left
+        the configured region even when LOCATION was a single-region or
+        multi-region value, a data-residency problem for PHI deployments)."""
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("test-api-key")
+
+        with patch("greycloud.auth.genai") as mock_genai:
+            create_client(
+                project_id="test-project",
+                location="us",
+                use_api_key=True,
+                api_key_file=str(api_key_file),
+            )
+            call_kwargs = mock_genai.Client.call_args[1]
+            assert call_kwargs["http_options"].base_url == "https://aiplatform.us.rep.googleapis.com"
+
+        with patch("greycloud.auth.genai") as mock_genai:
+            create_client(
+                project_id="test-project",
+                location="us-east4",
+                use_api_key=True,
+                api_key_file=str(api_key_file),
+            )
+            call_kwargs = mock_genai.Client.call_args[1]
+            assert call_kwargs["http_options"].base_url == "https://us-east4-aiplatform.googleapis.com"
+
+    @pytest.mark.auth
+    def test_create_client_default_endpoint_global_location(self, tmp_path):
+        """location='global' keeps the classic global host."""
+        api_key_file = tmp_path / "api_key.txt"
+        api_key_file.write_text("test-api-key")
+
+        with patch("greycloud.auth.genai") as mock_genai:
+            create_client(
+                project_id="test-project",
+                location="global",
+                use_api_key=True,
+                api_key_file=str(api_key_file),
+            )
+            call_kwargs = mock_genai.Client.call_args[1]
+            assert call_kwargs["http_options"].base_url == "https://aiplatform.googleapis.com"
 
     @pytest.mark.auth
     def test_create_client_custom_endpoint(self, tmp_path):
