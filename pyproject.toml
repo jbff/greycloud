@@ -28,7 +28,7 @@ classifiers = [
 
 dependencies = [
     # Use a modern google-genai that aligns with Python >= 3.10.
-    "google-genai>=1.59.0",
+    "google-genai>=2.31.0",
     "google-auth>=2.0.0",
     "google-cloud-storage>=3.8.0",
     "aiolimiter>=1.1.0",

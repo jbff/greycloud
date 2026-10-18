@@ -31,10 +31,10 @@ class TestGetMinTokensForModel:
         """Gemini 3 Flash requires 1024 tokens"""
         assert get_min_tokens_for_model("gemini-3.5-flash") == 1024
 
-    def test_gemini_3_pro(self):
-        """Gemini 3 Pro requires 4096 tokens"""
-        assert get_min_tokens_for_model("gemini-3.1-pro") == 4096
-        assert get_min_tokens_for_model("gemini-3.1-pro-preview") == 4096
+    def test_gemini_4_argon(self):
+        """Gemini 4 Argon requires 4096 tokens"""
+        assert get_min_tokens_for_model("gemini-4-argon") == 4096
+        assert get_min_tokens_for_model("gemini-4-argon-preview") == 4096
 
     def test_gemini_2_0(self):
         """Gemini 2.0 requires 2048 tokens"""
@@ -47,7 +47,7 @@ class TestGetMinTokensForModel:
     def test_case_insensitive(self):
         """Model name matching is case insensitive"""
         assert get_min_tokens_for_model("GEMINI-2.5-FLASH") == 1024
-        assert get_min_tokens_for_model("gemini-3.1-pro") == 4096
+        assert get_min_tokens_for_model("gemini-4-argon") == 4096
 
 
 class TestGreyCloudCacheInit:
