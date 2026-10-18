@@ -55,7 +55,7 @@ class TestGreyCloudConfig:
         config = GreyCloudConfig(project_id="test-project")
 
         # Defaults
-        assert config.model == "gemini-3-flash-preview"
+        assert config.model == "gemini-3.8-flash"
         assert config.temperature == 1.0
         assert config.top_p == 0.95
         assert config.max_output_tokens == 65535

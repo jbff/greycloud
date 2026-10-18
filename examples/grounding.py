@@ -21,7 +21,7 @@ from google.genai import types
 # Inject mode (the default): no retrieval tool is sent; GreyCloud searches
 # the datastore and prefixes the last user message with the top sources.
 config = GreyCloudConfig(
-    model="gemini-3.7-flash",
+    model="gemini-3.8-flash",
     use_vertex_ai_search=True,
     vertex_ai_search_datastore=(
         "projects/PROJECT_ID/locations/us/"

@@ -48,7 +48,7 @@ class GreyCloudConfig:
     # Model configuration
     # Default to a generally available Gemini 3 flash model.
     # You can override this per-request when calling GreyCloudClient.
-    model: str = "gemini-3-flash-preview"
+    model: str = "gemini-3.8-flash"
     endpoint: str = "https://aiplatform.googleapis.com"
     api_version: str = "v1"
 

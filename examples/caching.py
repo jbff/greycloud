@@ -34,7 +34,7 @@ def main():
     # Create configuration
     config = GreyCloudConfig(
         # project_id is read from PROJECT_ID env var by default
-        # model defaults to gemini-3-flash-preview
+        # model defaults to gemini-3.8-flash
     )
 
     print(f"Project: {config.project_id}")

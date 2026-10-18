@@ -7,7 +7,7 @@ from google.genai import types
 
 # Create configuration
 config = GreyCloudConfig(
-    model="gemini-3-flash-preview"
+    model="gemini-3.8-flash"
 )
 
 # Create client

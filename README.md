@@ -135,7 +135,7 @@ config = GreyCloudConfig(
     project_id="your-project-id",
     location="us-central1",
     # Default model is a Gemini 3 flash model; you can override if desired.
-    model="gemini-3-flash-preview",
+    model="gemini-3.8-flash",
 )
 
 # Create client
