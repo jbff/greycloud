@@ -10,7 +10,12 @@ from google import genai
 from google.genai import types
 
 from .config import GreyCloudConfig
-from .auth import create_client, _auto_reauth_allowed, is_auth_error_message
+from .auth import (
+    create_client,
+    _auto_reauth_allowed,
+    is_auth_error_message,
+    is_reauth_trigger,
+)
 from .grounding import (
     GroundingSource,
     build_grounding_context,
@@ -166,6 +171,7 @@ class GreyCloudClient:
                 endpoint=self.config.endpoint,
                 api_version=self.config.api_version,
                 auto_reauth=self.config.auto_reauth,
+                request_timeout=self.config.request_timeout,
             )
         except RuntimeError as e:
             # If authentication fails and auto_reauth is enabled, try automatic re-authentication
@@ -183,6 +189,7 @@ class GreyCloudClient:
                             endpoint=self.config.endpoint,
                             api_version=self.config.api_version,
                             auto_reauth=False,  # Don't loop
+                            request_timeout=self.config.request_timeout,
                         )
                         return
                     else:
@@ -215,6 +222,7 @@ class GreyCloudClient:
             endpoint=self.config.endpoint,
             api_version=self.config.api_version,
             auto_reauth=auto_reauth,
+            request_timeout=self.config.request_timeout,
         )
 
     def _build_tools(self) -> List[types.Tool]:

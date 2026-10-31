@@ -53,6 +53,7 @@ class GreyCloudAsyncClient:
             endpoint=self.config.endpoint,
             api_version=self.config.api_version,
             auto_reauth=self.config.auto_reauth,
+            request_timeout=self.config.request_timeout,
         )
 
     @property
@@ -639,6 +640,7 @@ class GreyCloudAsyncClient:
                                     endpoint=self.config.endpoint,
                                     api_version=self.config.api_version,
                                     auto_reauth=False,
+                                    request_timeout=self.config.request_timeout,
                                 )
                                 reauth_success = True
                             except Exception:
@@ -716,6 +718,7 @@ class GreyCloudAsyncClient:
                                     endpoint=self.config.endpoint,
                                     api_version=self.config.api_version,
                                     auto_reauth=False,
+                                    request_timeout=self.config.request_timeout,
                                 )
                                 reauth_success = True
                             except Exception:

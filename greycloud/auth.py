@@ -314,8 +314,9 @@ def create_client(
     use_api_key: bool = False,
     api_key_file: str = "GOOGLE_CLOUD_API_KEY",
     endpoint: str = "https://aiplatform.googleapis.com",
-    api_version: str = "v1",
+    api_version: str = "v1beta1",
     auto_reauth: bool = False,
+    request_timeout: Optional[int] = 1200,
 ) -> genai.Client:
     """
     Create and return a genai.Client with appropriate authentication
@@ -327,8 +328,9 @@ def create_client(
         use_api_key: If True, use API key authentication instead of OAuth
         api_key_file: Path to API key file if using API key auth
         endpoint: API endpoint base URL
-        api_version: API version
+        api_version: API version (default: "v1beta1")
         auto_reauth: If True, automatically attempt re-authentication on failure
+        request_timeout: Request timeout in seconds (default: 1200)
 
     Returns:
         Authenticated genai.Client instance
@@ -346,6 +348,13 @@ def create_client(
     if endpoint in ("", _GLOBAL_ENDPOINT):
         endpoint = endpoint_for_location(location)
 
+    timeout_ms = (request_timeout * 1000) if request_timeout else None
+    http_options = types.HttpOptions(
+        base_url=endpoint,
+        api_version=api_version,
+        timeout=timeout_ms,
+    )
+
     if use_api_key:
         api_key = get_credentials(
             project_id=project_id,
@@ -360,10 +369,7 @@ def create_client(
             api_key=api_key,
             project=project_id,
             location=location,
-            http_options=types.HttpOptions(
-                base_url=endpoint,
-                api_version=api_version,
-            ),
+            http_options=http_options,
         )
     else:
         credentials = get_credentials(
@@ -379,8 +385,5 @@ def create_client(
             credentials=credentials,
             project=project_id,
             location=location,
-            http_options=types.HttpOptions(
-                base_url=endpoint,
-                api_version=api_version,
-            ),
+            http_options=http_options,
         )

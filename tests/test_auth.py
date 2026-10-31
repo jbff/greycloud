@@ -241,7 +241,10 @@ class TestCreateClient:
                 api_key_file=str(api_key_file),
             )
             call_kwargs = mock_genai.Client.call_args[1]
-            assert call_kwargs["http_options"].base_url == "https://aiplatform.us.rep.googleapis.com"
+            assert (
+                call_kwargs["http_options"].base_url
+                == "https://aiplatform.us.rep.googleapis.com"
+            )
 
         with patch("greycloud.auth.genai") as mock_genai:
             create_client(
@@ -251,7 +254,10 @@ class TestCreateClient:
                 api_key_file=str(api_key_file),
             )
             call_kwargs = mock_genai.Client.call_args[1]
-            assert call_kwargs["http_options"].base_url == "https://us-east4-aiplatform.googleapis.com"
+            assert (
+                call_kwargs["http_options"].base_url
+                == "https://us-east4-aiplatform.googleapis.com"
+            )
 
     @pytest.mark.auth
     def test_create_client_default_endpoint_global_location(self, tmp_path):
@@ -267,7 +273,10 @@ class TestCreateClient:
                 api_key_file=str(api_key_file),
             )
             call_kwargs = mock_genai.Client.call_args[1]
-            assert call_kwargs["http_options"].base_url == "https://aiplatform.googleapis.com"
+            assert (
+                call_kwargs["http_options"].base_url
+                == "https://aiplatform.googleapis.com"
+            )
 
     @pytest.mark.auth
     def test_create_client_custom_endpoint(self, tmp_path):
@@ -432,3 +441,73 @@ class TestAutoReauthGate:
         with patch("greycloud.auth.subprocess.check_output", side_effect=error):
             with pytest.raises(RuntimeError, match="Failed to acquire OAuth"):
                 get_credentials(project_id="test-project", auto_reauth=False)
+
+
+def test_create_client_http_options_timeout_and_api_version(mocker):
+    from greycloud.auth import create_client
+
+    mocker.patch("greycloud.auth.get_credentials")
+    mock_genai_client = mocker.patch("greycloud.auth.genai.Client")
+    create_client(
+        project_id="test-proj",
+        location="us-central1",
+        api_version="v1beta1",
+        request_timeout=600,
+    )
+    mock_genai_client.assert_called_once()
+    _, kwargs = mock_genai_client.call_args
+    http_opts = kwargs["http_options"]
+    assert http_opts.api_version == "v1beta1"
+    assert http_opts.timeout == 600000  # 600s in ms
+
+
+def test_create_client_http_options_defaults(mocker):
+    from greycloud.auth import create_client
+
+    mocker.patch("greycloud.auth.get_credentials")
+    mock_genai_client = mocker.patch("greycloud.auth.genai.Client")
+    create_client(
+        project_id="test-proj",
+        location="us-central1",
+    )
+    mock_genai_client.assert_called_once()
+    _, kwargs = mock_genai_client.call_args
+    http_opts = kwargs["http_options"]
+    assert http_opts.api_version == "v1beta1"
+    assert http_opts.timeout == 1200000  # 1200s in ms
+
+
+def test_create_client_http_options_timeout_none(mocker):
+    from greycloud.auth import create_client
+
+    mocker.patch("greycloud.auth.get_credentials")
+    mock_genai_client = mocker.patch("greycloud.auth.genai.Client")
+    create_client(
+        project_id="test-proj",
+        location="us-central1",
+        request_timeout=None,
+    )
+    mock_genai_client.assert_called_once()
+    _, kwargs = mock_genai_client.call_args
+    http_opts = kwargs["http_options"]
+    assert http_opts.timeout is None
+
+
+def test_create_client_with_api_key_http_options_timeout(tmp_path, mocker):
+    from greycloud.auth import create_client
+
+    api_key_file = tmp_path / "api_key.txt"
+    api_key_file.write_text("test-api-key")
+    mock_genai_client = mocker.patch("greycloud.auth.genai.Client")
+    create_client(
+        project_id="test-proj",
+        location="us-central1",
+        use_api_key=True,
+        api_key_file=str(api_key_file),
+        request_timeout=300,
+    )
+    mock_genai_client.assert_called_once()
+    _, kwargs = mock_genai_client.call_args
+    http_opts = kwargs["http_options"]
+    assert http_opts.api_version == "v1beta1"
+    assert http_opts.timeout == 300000
