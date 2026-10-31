@@ -279,3 +279,42 @@ class TestGreyCloudConfig:
         is off."""
         with pytest.raises(TypeError, match="extractive_content_spec"):
             GreyCloudConfig(project_id="test-project", extractive_content_spec=bad)
+
+    def test_config_gemini_4_defaults(self):
+        """Test Gemini 4 and modernized config defaults"""
+        cfg = GreyCloudConfig(project_id="test-proj")
+        assert cfg.api_version == "v1beta1"
+        assert cfg.request_timeout == 1200
+        assert cfg.include_thoughts is True
+
+    @pytest.mark.parametrize("bad_timeout", [0, -1, -100])
+    def test_config_request_timeout_invalid_raises(self, bad_timeout):
+        with pytest.raises(ValueError, match="request_timeout"):
+            GreyCloudConfig(project_id="test-proj", request_timeout=bad_timeout)
+
+    @pytest.mark.parametrize("bad_type", ["1200", None, 12.5, True])
+    def test_config_request_timeout_rejects_non_int(self, bad_type):
+        with pytest.raises((TypeError, ValueError)):
+            GreyCloudConfig(project_id="test-proj", request_timeout=bad_type)
+
+    @pytest.mark.parametrize("bad", ["true", "false", 0, 1])
+    def test_config_include_thoughts_rejects_non_bool(self, bad):
+        with pytest.raises(TypeError, match="include_thoughts"):
+            GreyCloudConfig(project_id="test-proj", include_thoughts=bad)
+
+
+def test_is_gemini_4():
+    """Test is_gemini_4 model detection helper"""
+    from greycloud.config import is_gemini_4
+
+    assert is_gemini_4("gemini-4-argon") is True
+    assert is_gemini_4("gemini-4-carbon") is True
+    assert is_gemini_4("gemini-4-flash") is True
+    assert is_gemini_4("gemini-4.0-pro") is True
+    assert is_gemini_4("models/gemini-4-argon-preview") is True
+    assert is_gemini_4("GEMINI-4-FLASH") is True
+    assert is_gemini_4("gemini-3.8-flash") is False
+    assert is_gemini_4("gemini-2.5-pro") is False
+    assert is_gemini_4("") is False
+    assert is_gemini_4(None) is False
+    assert is_gemini_4(123) is False

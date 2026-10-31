@@ -3,8 +3,18 @@ Configuration class for GreyCloud module
 """
 
 import os
+import re
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
+
+_GEMINI_4_PATTERN = re.compile(r"(?:gemini-4|argon|carbon)", re.IGNORECASE)
+
+
+def is_gemini_4(model: str) -> bool:
+    """Return True if model is a Gemini 4 family model."""
+    if not model or not isinstance(model, str):
+        return False
+    return bool(_GEMINI_4_PATTERN.search(model))
 
 
 def _env_bool(name: str) -> bool:
@@ -50,7 +60,8 @@ class GreyCloudConfig:
     # You can override this per-request when calling GreyCloudClient.
     model: str = "gemini-3.8-flash"
     endpoint: str = "https://aiplatform.googleapis.com"
-    api_version: str = "v1"
+    api_version: str = "v1beta1"
+    request_timeout: int = 1200
 
     # Generation parameters
     temperature: float = 1.0
@@ -95,6 +106,7 @@ class GreyCloudConfig:
     # When None, no thinking config is sent. Set to "LOW", "MEDIUM", or "HIGH"
     # for models that support thinking.
     thinking_level: Optional[str] = None  # None, "LOW", "MEDIUM", "HIGH"
+    include_thoughts: bool = True
 
     # Batch processing
     # Buckets must now be configured explicitly when batch/GCS helpers are used.
@@ -142,12 +154,27 @@ class GreyCloudConfig:
         if self.min_grounding_query_chars < 0:
             raise ValueError("min_grounding_query_chars must be >= 0")
 
+        if not isinstance(self.request_timeout, int) or isinstance(
+            self.request_timeout, bool
+        ):
+            raise TypeError(
+                f"request_timeout must be an int; got {type(self.request_timeout).__name__}"
+            )
+
+        if self.request_timeout < 1:
+            raise ValueError("request_timeout must be >= 1")
+
         # Strict bool checks: a truthy non-bool (e.g. the string "false") is
         # dangerous in both directions — it would silently opt every search
         # into extractiveContentSpec (400 on chunking-config datastores), or
         # silently enable interactive browser re-login while the caller
         # believes the flag is off.
-        for bool_field in ("extractive_content_spec", "use_api_key", "auto_reauth"):
+        for bool_field in (
+            "extractive_content_spec",
+            "use_api_key",
+            "auto_reauth",
+            "include_thoughts",
+        ):
             value = getattr(self, bool_field)
             if not isinstance(value, bool):
                 raise TypeError(
