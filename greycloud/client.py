@@ -395,21 +395,46 @@ class GreyCloudClient:
         gemini_4 = is_gemini_4(effective_model)
 
         if gemini_4:
-            # Check thinking budget
-            if "thinking_budget" in kwargs:
+            # Check thinking budget in kwargs
+            if "thinking_budget" in kwargs or "thinkingBudget" in kwargs:
+                kwargs.pop("thinking_budget", None)
+                kwargs.pop("thinkingBudget", None)
                 raise ValueError(
                     "Gemini 4 does not support thinking_budget; use thinking_level instead."
                 )
-            if "thinking_config" in kwargs:
-                tc = kwargs["thinking_config"]
+
+            # Check and pop thinking_config / thinkingConfig in kwargs
+            # Always pop so config_dict.update(kwargs) can never overwrite the sanitized thinking_config!
+            tc = kwargs.pop("thinking_config", None)
+            if tc is None:
+                tc = kwargs.pop("thinkingConfig", None)
+
+            tc_thinking_level = None
+            if tc is not None:
                 if getattr(tc, "thinking_budget", None) is not None:
                     raise ValueError(
                         "Gemini 4 does not support thinking_budget; use thinking_level instead."
                     )
-                if isinstance(tc, dict) and "thinking_budget" in tc:
-                    raise ValueError(
-                        "Gemini 4 does not support thinking_budget; use thinking_level instead."
+                if isinstance(tc, dict):
+                    if "thinking_budget" in tc or "thinkingBudget" in tc:
+                        raise ValueError(
+                            "Gemini 4 does not support thinking_budget; use thinking_level instead."
+                        )
+                    tc_thinking_level = tc.get("thinking_level") or tc.get(
+                        "thinkingLevel"
                     )
+                else:
+                    tc_thinking_level = getattr(tc, "thinking_level", None)
+
+                # Validate tc_thinking_level if present
+                if tc_thinking_level is not None:
+                    chk_lvl = tc_thinking_level
+                    if hasattr(chk_lvl, "value"):
+                        chk_lvl = chk_lvl.value
+                    if str(chk_lvl).upper() == "MINIMAL":
+                        raise ValueError(
+                            "Gemini 4 does not support thinking_level='MINIMAL'; choose from LOW, MEDIUM, HIGH."
+                        )
 
             # Check cached_content
             effective_cached_content = cached_content or kwargs.pop(
@@ -432,12 +457,12 @@ class GreyCloudClient:
             effective_thinking_level = thinking_level
             if effective_thinking_level is None and "thinking_level" in kwargs:
                 effective_thinking_level = kwargs.pop("thinking_level")
-            if effective_thinking_level is None and "thinking_config" in kwargs:
-                tc = kwargs.pop("thinking_config")
-                if getattr(tc, "thinking_level", None) is not None:
-                    effective_thinking_level = getattr(tc, "thinking_level")
-                elif isinstance(tc, dict) and "thinking_level" in tc:
-                    effective_thinking_level = tc["thinking_level"]
+            elif "thinking_level" in kwargs:
+                kwargs.pop("thinking_level")
+            kwargs.pop("thinkingLevel", None)
+
+            if effective_thinking_level is None:
+                effective_thinking_level = tc_thinking_level
             if effective_thinking_level is None:
                 effective_thinking_level = self.config.thinking_level or "MEDIUM"
 

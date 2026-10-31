@@ -244,6 +244,58 @@ class TestGreyCloudAsyncClientConfigBuilding:
             assert cfg.top_p is None
             assert cfg.thinking_config.thinking_level == "MEDIUM"
 
+    def test_build_generate_config_gemini_4_kwargs_thinking_config_cannot_overwrite(
+        self, async_sample_config
+    ):
+        """Passing thinking_config in kwargs is sanitized and does not overwrite config."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            raw_tc = types.ThinkingConfig(thinking_level="HIGH")
+            cfg = client._build_generate_config(
+                model="gemini-4-argon", thinking_config=raw_tc
+            )
+            assert cfg.thinking_config.thinking_level == "HIGH"
+            assert cfg.thinking_config.include_thoughts is True
+
+            cfg2 = client._build_generate_config(
+                model="gemini-4-argon",
+                thinking_level="LOW",
+                thinking_config=raw_tc,
+            )
+            assert cfg2.thinking_config.thinking_level == "LOW"
+            assert cfg2.thinking_config.include_thoughts is True
+
+    def test_build_generate_config_gemini_4_kwargs_thinking_config_validates(
+        self, async_sample_config
+    ):
+        """thinking_config in kwargs validates budget and minimal level."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+
+            with pytest.raises(ValueError, match="thinking_budget"):
+                client._build_generate_config(
+                    model="gemini-4-argon",
+                    thinking_config=types.ThinkingConfig(thinking_budget=1024),
+                )
+
+            with pytest.raises(ValueError, match="thinking_budget"):
+                client._build_generate_config(
+                    model="gemini-4-argon",
+                    thinking_config={"thinkingBudget": 1024},
+                )
+
+            with pytest.raises(ValueError, match="MINIMAL"):
+                client._build_generate_config(
+                    model="gemini-4-argon",
+                    thinking_config=types.ThinkingConfig(thinking_level="MINIMAL"),
+                )
+
+            with pytest.raises(ValueError, match="MINIMAL"):
+                client._build_generate_config(
+                    model="gemini-4-argon",
+                    thinking_config={"thinkingLevel": "MINIMAL"},
+                )
+
 
 class TestGreyCloudAsyncClientGenerate:
     """Tests for async generate_content"""
@@ -265,6 +317,39 @@ class TestGreyCloudAsyncClientGenerate:
             result = await client.generate_content(contents)
             assert result.text == "Hello world"
             mock_async_genai_client.aio.models.generate_content.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_generate_content_gemini_4_sanitizes_config(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_content with Gemini 4 model sanitizes config before passing to underlying client"""
+        mock_response = MagicMock()
+        mock_response.text = "Gemini 4 response"
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            result = await client.generate_content(
+                contents,
+                model="gemini-4-argon",
+                temperature=0.7,
+                top_p=0.9,
+                frequency_penalty=0.4,
+            )
+            assert result.text == "Gemini 4 response"
+            call_args = mock_async_genai_client.aio.models.generate_content.call_args
+            assert call_args[1]["model"] == "gemini-4-argon"
+            cfg = call_args[1]["config"]
+            assert cfg.temperature is None
+            assert cfg.top_p is None
+            assert cfg.frequency_penalty is None
+            assert cfg.thinking_config.thinking_level == "MEDIUM"
+            assert cfg.thinking_config.include_thoughts is True
 
     @pytest.mark.asyncio
     async def test_generate_content_with_rate_limiting(

@@ -437,6 +437,66 @@ class TestGreyCloudClient:
             assert cfg.top_p is None
             assert cfg.thinking_config.thinking_level == "MEDIUM"
 
+    def test_build_generate_config_gemini_4_kwargs_thinking_config_cannot_overwrite(
+        self, sample_config
+    ):
+        """Passing thinking_config in kwargs is sanitized and does not overwrite config."""
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            client = GreyCloudClient(sample_config)
+            # Both object and dict in kwargs
+            raw_tc = types.ThinkingConfig(thinking_level="HIGH")
+            cfg = client._build_generate_config(
+                model="gemini-4-argon", thinking_config=raw_tc
+            )
+            assert cfg.thinking_config.thinking_level == "HIGH"
+            assert cfg.thinking_config.include_thoughts is True
+
+            # Precedence of explicit thinking_level parameter over kwargs thinking_config
+            cfg2 = client._build_generate_config(
+                model="gemini-4-argon",
+                thinking_level="LOW",
+                thinking_config=raw_tc,
+            )
+            assert cfg2.thinking_config.thinking_level == "LOW"
+            assert cfg2.thinking_config.include_thoughts is True
+
+    def test_build_generate_config_gemini_4_kwargs_thinking_config_validates(
+        self, sample_config
+    ):
+        """thinking_config in kwargs validates budget and minimal level."""
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            client = GreyCloudClient(sample_config)
+
+            # Object with thinking_budget
+            with pytest.raises(ValueError, match="thinking_budget"):
+                client._build_generate_config(
+                    model="gemini-4-argon",
+                    thinking_config=types.ThinkingConfig(thinking_budget=1024),
+                )
+
+            # Dict with thinkingBudget
+            with pytest.raises(ValueError, match="thinking_budget"):
+                client._build_generate_config(
+                    model="gemini-4-argon",
+                    thinking_config={"thinkingBudget": 1024},
+                )
+
+            # Object with MINIMAL
+            with pytest.raises(ValueError, match="MINIMAL"):
+                client._build_generate_config(
+                    model="gemini-4-argon",
+                    thinking_config=types.ThinkingConfig(thinking_level="MINIMAL"),
+                )
+
+            # Dict with MINIMAL
+            with pytest.raises(ValueError, match="MINIMAL"):
+                client._build_generate_config(
+                    model="gemini-4-argon",
+                    thinking_config={"thinkingLevel": "MINIMAL"},
+                )
+
     def test_is_authentication_error(self, sample_config):
         """Test authentication error detection"""
         with patch("greycloud.client.create_client") as mock_create:

@@ -486,23 +486,39 @@ class TestGreyCloudBatch:
     @pytest.mark.batch
     @patch("greycloud.batch.GCS_AVAILABLE", True)
     def test_batch_jsonl_gemini_4_dict_config_omits_sampling(self, sample_config):
-        """Test that dict configs for Gemini 4 also drop sampling and thinkingBudget."""
-        batch_requests = [
-            types.InlinedRequest(
-                model="gemini-4-argon",
-                contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
-                config={
-                    "temperature": 0.7,
-                    "topP": 0.9,
-                    "topK": 20,
-                    "maxOutputTokens": 500,
-                    "thinkingConfig": {
-                        "thinkingBudget": 1024,
-                        "thinkingLevel": "LOW",
-                    },
-                },
-            )
-        ]
+        """Test that actual dict configs for Gemini 4 drop sampling, penalties, and thinkingBudget."""
+        mock_req = MagicMock()
+        mock_req.model = "gemini-4-argon"
+        mock_req.contents = [{"role": "user", "parts": [{"text": "Hello"}]}]
+        mock_req.config = {
+            "temperature": 0.7,
+            "topP": 0.9,
+            "topK": 20,
+            "frequencyPenalty": 0.5,
+            "presencePenalty": 0.5,
+            "maxOutputTokens": 500,
+            "thinkingConfig": {
+                "thinkingBudget": 1024,
+                "thinkingLevel": "LOW",
+            },
+        }
+
+        mock_req_snake = MagicMock()
+        mock_req_snake.model = "gemini-4-argon"
+        mock_req_snake.contents = [{"role": "user", "parts": [{"text": "Hello 2"}]}]
+        mock_req_snake.config = {
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "top_k": 20,
+            "frequency_penalty": 0.5,
+            "presence_penalty": 0.5,
+            "maxOutputTokens": 600,
+            "thinking_config": {
+                "thinking_budget": 1024,
+                "thinking_level": "HIGH",
+            },
+        }
+        batch_requests = [mock_req, mock_req_snake]
 
         with patch("greycloud.batch.create_client") as mock_create:
             mock_create.return_value = MagicMock()
@@ -520,15 +536,34 @@ class TestGreyCloudBatch:
                 )
 
                 uploaded = mock_blob.upload_from_string.call_args[0][0]
-                req = json.loads(uploaded)["request"]
-                gen_cfg = req["generationConfig"]
-                assert "temperature" not in gen_cfg
-                assert "topP" not in gen_cfg
-                assert "topK" not in gen_cfg
-                assert gen_cfg["maxOutputTokens"] == 500
-                assert "thinkingConfig" in gen_cfg
-                assert "thinkingBudget" not in gen_cfg["thinkingConfig"]
-                assert gen_cfg["thinkingConfig"]["thinkingLevel"] == "LOW"
+                lines = uploaded.strip().split("\n")
+                assert len(lines) == 2
+
+                # Line 1: camelCase dict
+                req1 = json.loads(lines[0])["request"]
+                gen_cfg1 = req1["generationConfig"]
+                assert "temperature" not in gen_cfg1
+                assert "topP" not in gen_cfg1
+                assert "topK" not in gen_cfg1
+                assert "frequencyPenalty" not in gen_cfg1
+                assert "presencePenalty" not in gen_cfg1
+                assert gen_cfg1["maxOutputTokens"] == 500
+                assert "thinkingConfig" in gen_cfg1
+                assert "thinkingBudget" not in gen_cfg1["thinkingConfig"]
+                assert gen_cfg1["thinkingConfig"]["thinkingLevel"] == "LOW"
+
+                # Line 2: snake_case dict
+                req2 = json.loads(lines[1])["request"]
+                gen_cfg2 = req2["generationConfig"]
+                assert "temperature" not in gen_cfg2
+                assert "top_p" not in gen_cfg2
+                assert "top_k" not in gen_cfg2
+                assert "frequency_penalty" not in gen_cfg2
+                assert "presence_penalty" not in gen_cfg2
+                assert gen_cfg2["maxOutputTokens"] == 600
+                assert "thinking_config" in gen_cfg2
+                assert "thinking_budget" not in gen_cfg2["thinking_config"]
+                assert gen_cfg2["thinking_config"]["thinking_level"] == "HIGH"
 
     @pytest.mark.batch
     @patch("greycloud.batch.GCS_AVAILABLE", True)

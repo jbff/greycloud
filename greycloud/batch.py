@@ -291,13 +291,18 @@ class GreyCloudBatch:
                         cfg_dict.pop("top_p", None)
                         cfg_dict.pop("topK", None)
                         cfg_dict.pop("top_k", None)
-                        if "thinkingConfig" in cfg_dict and isinstance(
-                            cfg_dict["thinkingConfig"], dict
-                        ):
-                            tc = dict(cfg_dict["thinkingConfig"])
-                            tc.pop("thinkingBudget", None)
-                            tc.pop("thinking_budget", None)
-                            cfg_dict["thinkingConfig"] = tc
+                        cfg_dict.pop("frequencyPenalty", None)
+                        cfg_dict.pop("frequency_penalty", None)
+                        cfg_dict.pop("presencePenalty", None)
+                        cfg_dict.pop("presence_penalty", None)
+                        for tc_key in ("thinkingConfig", "thinking_config"):
+                            if tc_key in cfg_dict and isinstance(
+                                cfg_dict[tc_key], dict
+                            ):
+                                tc = dict(cfg_dict[tc_key])
+                                tc.pop("thinkingBudget", None)
+                                tc.pop("thinking_budget", None)
+                                cfg_dict[tc_key] = tc
                     request_inner["generationConfig"] = cfg_dict
                 else:
                     gen_config = {}
