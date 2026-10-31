@@ -204,6 +204,165 @@ class TestGreyCloudClient:
 
             assert chunks == []
 
+    def test_stream_thinking_chunks_default_yields_only_text(
+        self, sample_config, sample_contents
+    ):
+        """Default stream skips thinking chunks and yields only finalized text"""
+        part1 = MagicMock()
+        part1.text = "I am thinking"
+        part1.thought = True
+        chunk1 = MagicMock()
+        chunk1.candidates = [MagicMock()]
+        chunk1.candidates[0].content = MagicMock()
+        chunk1.candidates[0].content.parts = [part1]
+
+        part2 = MagicMock()
+        part2.text = "Here is the answer"
+        part2.thought = False
+        chunk2 = MagicMock()
+        chunk2.candidates = [MagicMock()]
+        chunk2.candidates[0].content = MagicMock()
+        chunk2.candidates[0].content.parts = [part2]
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.return_value = [
+                chunk1,
+                chunk2,
+            ]
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            chunks = list(client.generate_content_stream(sample_contents))
+
+            assert chunks == ["Here is the answer"]
+
+    def test_stream_return_events_yields_thought_and_text_dicts(
+        self, sample_config, sample_contents
+    ):
+        """return_events=True yields thought and text dict events"""
+        part1 = MagicMock()
+        part1.text = "I am thinking"
+        part1.thought = True
+        chunk1 = MagicMock()
+        chunk1.candidates = [MagicMock()]
+        chunk1.candidates[0].content = MagicMock()
+        chunk1.candidates[0].content.parts = [part1]
+
+        part2 = MagicMock()
+        part2.text = "Here is the answer"
+        part2.thought = False
+        chunk2 = MagicMock()
+        chunk2.candidates = [MagicMock()]
+        chunk2.candidates[0].content = MagicMock()
+        chunk2.candidates[0].content.parts = [part2]
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.return_value = [
+                chunk1,
+                chunk2,
+            ]
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            chunks = list(
+                client.generate_content_stream(sample_contents, return_events=True)
+            )
+
+            assert chunks == [
+                {"thought": "I am thinking"},
+                {"text": "Here is the answer"},
+            ]
+
+    def test_stream_on_thought_callback(self, sample_config, sample_contents):
+        """on_thought callback receives thought text, errors in callback are logged"""
+        part1 = MagicMock()
+        part1.text = "I am thinking"
+        part1.thought = True
+        chunk1 = MagicMock()
+        chunk1.candidates = [MagicMock()]
+        chunk1.candidates[0].content = MagicMock()
+        chunk1.candidates[0].content.parts = [part1]
+
+        part2 = MagicMock()
+        part2.text = "Here is the answer"
+        part2.thought = False
+        chunk2 = MagicMock()
+        chunk2.candidates = [MagicMock()]
+        chunk2.candidates[0].content = MagicMock()
+        chunk2.candidates[0].content.parts = [part2]
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.return_value = [
+                chunk1,
+                chunk2,
+            ]
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            captured = []
+            chunks = list(
+                client.generate_content_stream(
+                    sample_contents, on_thought=lambda t: captured.append(t)
+                )
+            )
+
+            assert captured == ["I am thinking"]
+            assert chunks == ["Here is the answer"]
+
+            # Test failing callback does not crash stream
+            def broken_on_thought(t):
+                raise RuntimeError("callback crash")
+
+            chunks = list(
+                client.generate_content_stream(
+                    sample_contents, on_thought=broken_on_thought
+                )
+            )
+            assert chunks == ["Here is the answer"]
+
+    def test_generate_content_stream_request_timeout(
+        self, sample_config, sample_contents
+    ):
+        """generate_content_stream propagates request_timeout to config.http_options"""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = None
+        mock_chunk.text = ""
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.return_value = [mock_chunk]
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            list(client.generate_content_stream(sample_contents, request_timeout=45))
+
+            call_args = mock_genai_client.models.generate_content_stream.call_args
+            config = call_args[1]["config"]
+            assert config.http_options is not None
+            assert config.http_options.timeout == 45000
+
+    def test_generate_content_request_timeout(
+        self, sample_config, sample_contents, mock_generate_response
+    ):
+        """generate_content propagates request_timeout to config.http_options"""
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content.return_value = (
+                mock_generate_response
+            )
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            client.generate_content(sample_contents, request_timeout=60)
+
+            call_args = mock_genai_client.models.generate_content.call_args
+            config = call_args[1]["config"]
+            assert config.http_options is not None
+            assert config.http_options.timeout == 60000
+
     def test_count_tokens(self, sample_config, sample_contents):
         """Test token counting"""
         with patch("greycloud.client.create_client") as mock_create:

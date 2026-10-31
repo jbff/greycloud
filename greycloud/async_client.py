@@ -6,6 +6,7 @@ to enforce RPM, TPM, and concurrency limits.
 """
 
 import asyncio
+import inspect
 import logging
 import random
 import time
@@ -351,11 +352,22 @@ class GreyCloudAsyncClient:
         tools: Optional[List[types.Tool]] = None,
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
+        request_timeout: Optional[int] = None,
+        http_options: Optional[types.HttpOptions] = None,
         **kwargs,
     ) -> types.GenerateContentConfig:
         """Build GenerateContentConfig from parameters and config defaults."""
         effective_model = model or self.config.model
         gemini_4 = is_gemini_4(effective_model)
+
+        # Handle request_timeout / http_options
+        if request_timeout is None and "request_timeout" in kwargs:
+            request_timeout = kwargs.pop("request_timeout")
+        final_http_options = http_options
+        if request_timeout is not None:
+            final_http_options = types.HttpOptions(timeout=request_timeout * 1000)
+        elif final_http_options is None and "http_options" in kwargs:
+            final_http_options = kwargs.pop("http_options")
 
         if gemini_4:
             # Check thinking budget in kwargs
@@ -492,6 +504,8 @@ class GreyCloudAsyncClient:
                 config_dict["system_instruction"] = [
                     types.Part.from_text(text=final_system_instruction)
                 ]
+            if final_http_options is not None:
+                config_dict["http_options"] = final_http_options
             config_dict.update(kwargs)
             return types.GenerateContentConfig(**config_dict)
 
@@ -554,6 +568,8 @@ class GreyCloudAsyncClient:
             )
         if cached_content:
             config_dict["cached_content"] = cached_content
+        if final_http_options is not None:
+            config_dict["http_options"] = final_http_options
         config_dict.update(kwargs)
         return types.GenerateContentConfig(**config_dict)
 
@@ -573,6 +589,7 @@ class GreyCloudAsyncClient:
         grounding_query: Optional[str] = None,
         grounding: bool = True,
         on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
+        request_timeout: Optional[int] = None,
         **kwargs,
     ) -> types.GenerateContentResponse:
         """Generate content with rate limiting.
@@ -592,6 +609,7 @@ class GreyCloudAsyncClient:
                 not invoked when grounding is skipped entirely. Coroutine
                 callbacks are awaited; callback exceptions are logged at
                 WARNING and never propagate.
+            request_timeout: Optional per-call request timeout in seconds.
         """
         model_name = model or self.config.model
         contents = await self._apply_grounding_async(
@@ -612,6 +630,7 @@ class GreyCloudAsyncClient:
             tools=tools,
             thinking_level=thinking_level,
             cached_content=cached_content,
+            request_timeout=request_timeout,
             **kwargs,
         )
         # Token estimate accounts for any injected grounding block.
@@ -636,15 +655,21 @@ class GreyCloudAsyncClient:
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
         return_chunks: bool = False,
+        return_events: bool = False,
+        on_thought: Optional[Callable[[str], Any]] = None,
         retry_unquoted: bool = True,
         grounding_query: Optional[str] = None,
         grounding: bool = True,
         on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
+        request_timeout: Optional[int] = None,
         **kwargs,
-    ) -> AsyncGenerator[Union[str, types.GenerateContentResponse], None]:
-        """Generate content (streaming). Yields text chunks or raw response objects. Rate-limited.
+    ) -> AsyncGenerator[Union[str, Dict[str, str], types.GenerateContentResponse], None]:
+        """Generate content (streaming). Yields text chunks, event dicts, or raw response objects. Rate-limited.
 
         Args:
+            return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings
+            return_events: If True, yield structured dict events (``{"thought": ...}`` or ``{"text": ...}``)
+            on_thought: Optional sync or async callback invoked with thought text as thinking tokens arrive
             retry_unquoted: Passed through to the grounding search; see
                 :func:`greycloud.grounding.asearch_sources`.
             grounding_query: Optional explicit Discovery Engine query used in
@@ -660,6 +685,7 @@ class GreyCloudAsyncClient:
                 callbacks are awaited; callback exceptions are logged at
                 WARNING and never propagate. Fires when the async generator is
                 first advanced.
+            request_timeout: Optional per-call request timeout in seconds.
         """
         model_name = model or self.config.model
         # Async generator: the grounding search + injection run when the
@@ -682,6 +708,7 @@ class GreyCloudAsyncClient:
             tools=tools,
             thinking_level=thinking_level,
             cached_content=cached_content,
+            request_timeout=request_timeout,
             **kwargs,
         )
         # Token estimate accounts for any injected grounding block.
@@ -696,15 +723,44 @@ class GreyCloudAsyncClient:
         async for chunk in stream:
             if return_chunks:
                 yield chunk
-            else:
-                if (
-                    chunk.candidates
-                    and chunk.candidates[0].content
-                    and chunk.candidates[0].content.parts
-                ):
-                    chunk_text = chunk.text
-                    if chunk_text:
-                        yield chunk_text
+                continue
+
+            if not (
+                chunk.candidates
+                and chunk.candidates[0].content
+                and chunk.candidates[0].content.parts
+            ):
+                continue
+
+            for part in chunk.candidates[0].content.parts:
+                is_thought = getattr(part, "thought", False) is True
+                text = getattr(part, "text", "") or ""
+                if not isinstance(text, str):
+                    if hasattr(chunk, "text") and isinstance(chunk.text, str):
+                        text = chunk.text
+                    else:
+                        continue
+                if not text:
+                    continue
+
+                if is_thought:
+                    if on_thought:
+                        try:
+                            if inspect.iscoroutinefunction(on_thought):
+                                await on_thought(text)
+                            else:
+                                res = on_thought(text)
+                                if inspect.iscoroutine(res):
+                                    await res
+                        except Exception as e:
+                            logger.warning("on_thought callback failed: %s", e)
+                    if return_events:
+                        yield {"thought": text}
+                else:
+                    if return_events:
+                        yield {"text": text}
+                    else:
+                        yield text
 
     async def count_tokens(
         self,
@@ -738,7 +794,7 @@ class GreyCloudAsyncClient:
         **generate_kwargs,
     ) -> Union[
         types.GenerateContentResponse,
-        AsyncGenerator[Union[str, types.GenerateContentResponse], None],
+        AsyncGenerator[Union[str, Dict[str, str], types.GenerateContentResponse], None],
     ]:
         """Generate content with exponential backoff retry. If streaming=True, returns an async generator of text chunks or raw response objects."""
         if streaming:
@@ -826,7 +882,7 @@ class GreyCloudAsyncClient:
         max_delay: float,
         return_chunks: bool = False,
         **generate_kwargs,
-    ) -> AsyncGenerator[Union[str, types.GenerateContentResponse], None]:
+    ) -> AsyncGenerator[Union[str, Dict[str, str], types.GenerateContentResponse], None]:
         """Async generator that yields stream chunks with retry on failure."""
         for attempt in range(max_retries + 1):
             try:

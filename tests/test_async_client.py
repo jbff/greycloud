@@ -374,6 +374,28 @@ class TestGreyCloudAsyncClientGenerate:
                 mock_limiter.assert_called_once()
                 assert result == mock_response
 
+    @pytest.mark.asyncio
+    async def test_generate_content_request_timeout(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_content propagates request_timeout to config.http_options"""
+        mock_response = MagicMock()
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            await client.generate_content(contents, request_timeout=55)
+
+            call_args = mock_async_genai_client.aio.models.generate_content.call_args
+            cfg = call_args[1]["config"]
+            assert cfg.http_options is not None
+            assert cfg.http_options.timeout == 55000
+
 
 class TestGreyCloudAsyncClientGenerateContentStream:
     """Tests for async generate_content_stream"""
@@ -514,6 +536,187 @@ class TestGreyCloudAsyncClientGenerateContentStream:
                 mock_limiter.assert_called_once()
                 call_args = mock_limiter.call_args
                 assert call_args[0][0] >= 1  # token_est
+
+    @pytest.mark.asyncio
+    async def test_stream_thinking_chunks_default_yields_only_text(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """Default async stream skips thinking chunks and yields only finalized text"""
+        part1 = MagicMock()
+        part1.text = "I am thinking"
+        part1.thought = True
+        chunk1 = MagicMock()
+        chunk1.candidates = [MagicMock()]
+        chunk1.candidates[0].content = MagicMock()
+        chunk1.candidates[0].content.parts = [part1]
+
+        part2 = MagicMock()
+        part2.text = "Here is the answer"
+        part2.thought = False
+        chunk2 = MagicMock()
+        chunk2.candidates = [MagicMock()]
+        chunk2.candidates[0].content = MagicMock()
+        chunk2.candidates[0].content.parts = [part2]
+
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(chunk1, chunk2)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            chunks = []
+            async for chunk in client.generate_content_stream(contents):
+                chunks.append(chunk)
+
+            assert chunks == ["Here is the answer"]
+
+    @pytest.mark.asyncio
+    async def test_stream_return_events_yields_thought_and_text_dicts(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """return_events=True yields thought and text dict events in async stream"""
+        part1 = MagicMock()
+        part1.text = "I am thinking"
+        part1.thought = True
+        chunk1 = MagicMock()
+        chunk1.candidates = [MagicMock()]
+        chunk1.candidates[0].content = MagicMock()
+        chunk1.candidates[0].content.parts = [part1]
+
+        part2 = MagicMock()
+        part2.text = "Here is the answer"
+        part2.thought = False
+        chunk2 = MagicMock()
+        chunk2.candidates = [MagicMock()]
+        chunk2.candidates[0].content = MagicMock()
+        chunk2.candidates[0].content.parts = [part2]
+
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(chunk1, chunk2)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            chunks = []
+            async for chunk in client.generate_content_stream(
+                contents, return_events=True
+            ):
+                chunks.append(chunk)
+
+            assert chunks == [
+                {"thought": "I am thinking"},
+                {"text": "Here is the answer"},
+            ]
+
+    @pytest.mark.asyncio
+    async def test_stream_on_thought_callback(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """on_thought callback receives thought text (both sync and async callbacks)"""
+        part1 = MagicMock()
+        part1.text = "I am thinking"
+        part1.thought = True
+        chunk1 = MagicMock()
+        chunk1.candidates = [MagicMock()]
+        chunk1.candidates[0].content = MagicMock()
+        chunk1.candidates[0].content.parts = [part1]
+
+        part2 = MagicMock()
+        part2.text = "Here is the answer"
+        part2.thought = False
+        chunk2 = MagicMock()
+        chunk2.candidates = [MagicMock()]
+        chunk2.candidates[0].content = MagicMock()
+        chunk2.candidates[0].content.parts = [part2]
+
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(chunk1, chunk2)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+
+            # 1. Sync callback
+            captured_sync = []
+            chunks = []
+            async for chunk in client.generate_content_stream(
+                contents, on_thought=lambda t: captured_sync.append(t)
+            ):
+                chunks.append(chunk)
+            assert captured_sync == ["I am thinking"]
+            assert chunks == ["Here is the answer"]
+
+            # 2. Async callback
+            captured_async = []
+
+            async def async_cb(t):
+                captured_async.append(t)
+
+            chunks = []
+            async for chunk in client.generate_content_stream(
+                contents, on_thought=async_cb
+            ):
+                chunks.append(chunk)
+            assert captured_async == ["I am thinking"]
+            assert chunks == ["Here is the answer"]
+
+            # 3. Failing callback does not crash stream
+            async def failing_async_cb(t):
+                raise RuntimeError("async callback crash")
+
+            chunks = []
+            async for chunk in client.generate_content_stream(
+                contents, on_thought=failing_async_cb
+            ):
+                chunks.append(chunk)
+            assert chunks == ["Here is the answer"]
+
+    @pytest.mark.asyncio
+    async def test_generate_content_stream_request_timeout(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_content_stream propagates request_timeout to config.http_options"""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = None
+        mock_chunk.text = ""
+
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(mock_chunk)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            async for _ in client.generate_content_stream(
+                contents, request_timeout=35
+            ):
+                pass
+
+            call_args = (
+                mock_async_genai_client.aio.models.generate_content_stream.call_args
+            )
+            cfg = call_args[1]["config"]
+            assert cfg.http_options is not None
+            assert cfg.http_options.timeout == 35000
 
 
 class TestGreyCloudAsyncClientCountTokens:

@@ -388,11 +388,22 @@ class GreyCloudClient:
         tools: Optional[List[types.Tool]] = None,
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
+        request_timeout: Optional[int] = None,
+        http_options: Optional[types.HttpOptions] = None,
         **kwargs,
     ) -> types.GenerateContentConfig:
         """Build GenerateContentConfig from parameters and config"""
         effective_model = model or self.config.model
         gemini_4 = is_gemini_4(effective_model)
+
+        # Handle request_timeout / http_options
+        if request_timeout is None and "request_timeout" in kwargs:
+            request_timeout = kwargs.pop("request_timeout")
+        final_http_options = http_options
+        if request_timeout is not None:
+            final_http_options = types.HttpOptions(timeout=request_timeout * 1000)
+        elif final_http_options is None and "http_options" in kwargs:
+            final_http_options = kwargs.pop("http_options")
 
         if gemini_4:
             # Check thinking budget in kwargs
@@ -529,6 +540,8 @@ class GreyCloudClient:
                 config_dict["system_instruction"] = [
                     types.Part.from_text(text=final_system_instruction)
                 ]
+            if final_http_options is not None:
+                config_dict["http_options"] = final_http_options
             config_dict.update(kwargs)
             return types.GenerateContentConfig(**config_dict)
 
@@ -606,6 +619,9 @@ class GreyCloudClient:
         if cached_content:
             config_dict["cached_content"] = cached_content
 
+        if final_http_options is not None:
+            config_dict["http_options"] = final_http_options
+
         # Add any additional kwargs
         config_dict.update(kwargs)
 
@@ -627,6 +643,7 @@ class GreyCloudClient:
         grounding_query: Optional[str] = None,
         grounding: bool = True,
         on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
+        request_timeout: Optional[int] = None,
         **kwargs,
     ) -> types.GenerateContentResponse:
         """
@@ -656,6 +673,7 @@ class GreyCloudClient:
                 being injected (``[]`` when the search ran but found nothing);
                 not invoked when grounding is skipped entirely. Callback
                 exceptions are logged at WARNING and never propagate.
+            request_timeout: Optional per-call request timeout in seconds.
             **kwargs: Additional parameters for GenerateContentConfig
 
         Returns:
@@ -680,6 +698,7 @@ class GreyCloudClient:
             tools=tools,
             thinking_level=thinking_level,
             cached_content=cached_content,
+            request_timeout=request_timeout,
             **kwargs,
         )
 
@@ -700,12 +719,15 @@ class GreyCloudClient:
         thinking_level: Optional[str] = None,
         cached_content: Optional[str] = None,
         return_chunks: bool = False,
+        return_events: bool = False,
+        on_thought: Optional[Callable[[str], None]] = None,
         retry_unquoted: bool = True,
         grounding_query: Optional[str] = None,
         grounding: bool = True,
         on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
+        request_timeout: Optional[int] = None,
         **kwargs,
-    ) -> Generator[Union[str, types.GenerateContentResponse], None, None]:
+    ) -> Generator[Union[str, Dict[str, str], types.GenerateContentResponse], None, None]:
         """
         Generate content (streaming)
 
@@ -721,6 +743,8 @@ class GreyCloudClient:
             thinking_level: Thinking level override
             cached_content: Cache name to use for context (see GreyCloudCache)
             return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings
+            return_events: If True, yield structured dict events (``{"thought": ...}`` or ``{"text": ...}``)
+            on_thought: Optional callback invoked with thought text as thinking tokens arrive
             retry_unquoted: Passed through to the grounding search; see
                 :func:`greycloud.grounding.search_sources`.
             grounding_query: Optional explicit Discovery Engine query used in
@@ -735,10 +759,11 @@ class GreyCloudClient:
                 not invoked when grounding is skipped entirely. Callback
                 exceptions are logged at WARNING and never propagate. Fires
                 when the generator is first advanced.
+            request_timeout: Optional per-call request timeout in seconds.
             **kwargs: Additional parameters for GenerateContentConfig
 
         Yields:
-            Union[str, types.GenerateContentResponse]: Chunks of response text or raw response objects
+            Union[str, Dict[str, str], types.GenerateContentResponse]: Chunks of response text, event dicts, or raw response objects
         """
         model_name = model or self.config.model
         # Generator: the grounding search + injection run when the generator is
@@ -761,6 +786,7 @@ class GreyCloudClient:
             tools=tools,
             thinking_level=thinking_level,
             cached_content=cached_content,
+            request_timeout=request_timeout,
             **kwargs,
         )
 
@@ -771,15 +797,39 @@ class GreyCloudClient:
         ):
             if return_chunks:
                 yield chunk
-            else:
-                if (
-                    chunk.candidates
-                    and chunk.candidates[0].content
-                    and chunk.candidates[0].content.parts
-                ):
-                    chunk_text = chunk.text
-                    if chunk_text:
-                        yield chunk_text
+                continue
+
+            if not (
+                chunk.candidates
+                and chunk.candidates[0].content
+                and chunk.candidates[0].content.parts
+            ):
+                continue
+
+            for part in chunk.candidates[0].content.parts:
+                is_thought = getattr(part, "thought", False) is True
+                text = getattr(part, "text", "") or ""
+                if not isinstance(text, str):
+                    if hasattr(chunk, "text") and isinstance(chunk.text, str):
+                        text = chunk.text
+                    else:
+                        continue
+                if not text:
+                    continue
+
+                if is_thought:
+                    if on_thought:
+                        try:
+                            on_thought(text)
+                        except Exception as e:
+                            logger.warning("on_thought callback failed: %s", e)
+                    if return_events:
+                        yield {"thought": text}
+                else:
+                    if return_events:
+                        yield {"text": text}
+                    else:
+                        yield text
 
     def count_tokens(
         self,
