@@ -147,6 +147,103 @@ class TestGreyCloudAsyncClientConfigBuilding:
             assert len(config.safety_settings) == 1
             assert config.safety_settings[0].category == "HARM_CATEGORY_HATE_SPEECH"
 
+    def test_build_generate_config_gemini_4_strips_penalties_and_sampling(
+        self, async_sample_config
+    ):
+        """Gemini 4 models strip sampling and penalty parameters and default thinking."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            cfg = client._build_generate_config(
+                model="gemini-4-argon",
+                frequency_penalty=0.5,
+                presence_penalty=0.5,
+                temperature=0.7,
+                top_p=0.9,
+                top_k=40,
+            )
+            assert cfg.temperature is None
+            assert cfg.top_p is None
+            assert cfg.top_k is None
+            assert cfg.frequency_penalty is None
+            assert cfg.presence_penalty is None
+            assert cfg.thinking_config is not None
+            assert cfg.thinking_config.thinking_level == "MEDIUM"
+            assert cfg.thinking_config.include_thoughts is True
+
+    def test_build_generate_config_gemini_4_rejects_cached_content(
+        self, async_sample_config
+    ):
+        """Gemini 4 models reject explicit cached_content."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            with pytest.raises(ValueError, match="implicit durable caching"):
+                client._build_generate_config(
+                    model="gemini-4-argon", cached_content="caches/123"
+                )
+
+    def test_build_generate_config_gemini_3_preserves_sampling(
+        self, async_sample_config
+    ):
+        """Non-Gemini 4 models preserve temperature and top_p."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            cfg = client._build_generate_config(
+                model="gemini-3.8-flash", temperature=0.7, top_p=0.9
+            )
+            assert cfg.temperature == 0.7
+            assert cfg.top_p == 0.9
+
+    def test_build_generate_config_gemini_4_rejects_thinking_budget(
+        self, async_sample_config
+    ):
+        """Gemini 4 models reject thinking_budget."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            with pytest.raises(ValueError, match="thinking_budget"):
+                client._build_generate_config(
+                    model="gemini-4-argon", thinking_budget=1024
+                )
+
+    def test_build_generate_config_gemini_4_rejects_minimal_thinking_level(
+        self, async_sample_config
+    ):
+        """Gemini 4 models reject MINIMAL thinking level."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            with pytest.raises(ValueError, match="MINIMAL"):
+                client._build_generate_config(
+                    model="gemini-4-argon", thinking_level="MINIMAL"
+                )
+
+    def test_build_generate_config_gemini_4_custom_thinking_level(
+        self, async_sample_config
+    ):
+        """Gemini 4 accepts valid explicit thinking_level (LOW, MEDIUM, HIGH)."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            cfg = client._build_generate_config(
+                model="gemini-4-argon", thinking_level="HIGH"
+            )
+            assert cfg.thinking_config.thinking_level == "HIGH"
+            assert cfg.thinking_config.include_thoughts is True
+
+    def test_build_generate_config_gemini_4_from_client_config_model(self):
+        """When model is not passed, client.config.model is used for sanitization."""
+        from greycloud.config import GreyCloudConfig
+
+        cfg_inst = GreyCloudConfig(
+            project_id="test-proj",
+            model="gemini-4-argon",
+            temperature=0.8,
+            top_p=0.95,
+        )
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(cfg_inst)
+            cfg = client._build_generate_config()
+            assert cfg.temperature is None
+            assert cfg.top_p is None
+            assert cfg.thinking_config.thinking_level == "MEDIUM"
+
 
 class TestGreyCloudAsyncClientGenerate:
     """Tests for async generate_content"""
@@ -1172,7 +1269,9 @@ class TestGroundingQueryAndSkip:
                 client = GreyCloudAsyncClient(
                     _async_grounding_config(min_grounding_query_chars=5)
                 )
-                await client.generate_content(self._contents("distributed consensus raft"))
+                await client.generate_content(
+                    self._contents("distributed consensus raft")
+                )
 
         assert mock_search.call_args[0][1] == "distributed consensus raft"
 

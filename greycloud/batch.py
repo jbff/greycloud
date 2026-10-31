@@ -21,7 +21,7 @@ except ImportError:
     storage = None  # type: ignore[assignment]
     GCS_AVAILABLE = False
 
-from .config import GreyCloudConfig
+from .config import GreyCloudConfig, is_gemini_4
 from .auth import create_client
 
 
@@ -279,19 +279,36 @@ class GreyCloudBatch:
                 "contents": contents_serializable,
             }
 
+            gemini_4 = is_gemini_4(request.model or "")
+
             # Serialize generationConfig (camelCase field names, omit None values)
             if request.config:
                 if isinstance(request.config, dict):
-                    request_inner["generationConfig"] = request.config
+                    cfg_dict = dict(request.config)
+                    if gemini_4:
+                        cfg_dict.pop("temperature", None)
+                        cfg_dict.pop("topP", None)
+                        cfg_dict.pop("top_p", None)
+                        cfg_dict.pop("topK", None)
+                        cfg_dict.pop("top_k", None)
+                        if "thinkingConfig" in cfg_dict and isinstance(
+                            cfg_dict["thinkingConfig"], dict
+                        ):
+                            tc = dict(cfg_dict["thinkingConfig"])
+                            tc.pop("thinkingBudget", None)
+                            tc.pop("thinking_budget", None)
+                            cfg_dict["thinkingConfig"] = tc
+                    request_inner["generationConfig"] = cfg_dict
                 else:
                     gen_config = {}
                     cfg = request.config
-                    if getattr(cfg, "temperature", None) is not None:
-                        gen_config["temperature"] = cfg.temperature
-                    if getattr(cfg, "top_p", None) is not None:
-                        gen_config["topP"] = cfg.top_p
-                    if getattr(cfg, "top_k", None) is not None:
-                        gen_config["topK"] = cfg.top_k
+                    if not gemini_4:
+                        if getattr(cfg, "temperature", None) is not None:
+                            gen_config["temperature"] = cfg.temperature
+                        if getattr(cfg, "top_p", None) is not None:
+                            gen_config["topP"] = cfg.top_p
+                        if getattr(cfg, "top_k", None) is not None:
+                            gen_config["topK"] = cfg.top_k
                     if getattr(cfg, "max_output_tokens", None) is not None:
                         gen_config["maxOutputTokens"] = cfg.max_output_tokens
                     if getattr(cfg, "candidate_count", None) is not None:
@@ -308,10 +325,16 @@ class GreyCloudBatch:
                     thinking = getattr(cfg, "thinking_config", None)
                     if thinking is not None:
                         tc = {}
-                        if getattr(thinking, "thinking_budget", None) is not None:
+                        if (
+                            not gemini_4
+                            and getattr(thinking, "thinking_budget", None) is not None
+                        ):
                             tc["thinkingBudget"] = thinking.thinking_budget
                         if getattr(thinking, "thinking_level", None) is not None:
-                            tc["thinkingLevel"] = thinking.thinking_level
+                            tl = thinking.thinking_level
+                            if hasattr(tl, "value"):
+                                tl = tl.value
+                            tc["thinkingLevel"] = str(tl)
                         if getattr(thinking, "include_thoughts", None) is not None:
                             tc["includeThoughts"] = thinking.include_thoughts
                         if tc:

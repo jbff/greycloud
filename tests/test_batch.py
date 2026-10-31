@@ -227,7 +227,7 @@ class TestGreyCloudBatch:
         """Test batch requests upload"""
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-4-argon",
+                model="gemini-3.8-flash",
                 contents=[{"role": "user", "parts": [{"text": "Test"}]}],
                 config=types.GenerateContentConfig(temperature=0.2),
             )
@@ -261,7 +261,7 @@ class TestGreyCloudBatch:
                 obj = json.loads(lines[0])
                 assert "request" in obj
                 req = obj["request"]
-                assert req["model"] == "gemini-4-argon"
+                assert req["model"] == "gemini-3.8-flash"
                 assert "contents" in req
                 # Config should be serialized as generationConfig (not "config")
                 assert "generationConfig" in req
@@ -274,7 +274,7 @@ class TestGreyCloudBatch:
         """Test that JSONL serialization uses camelCase field names"""
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-4-argon",
+                model="gemini-3.8-flash",
                 contents=[{"role": "user", "parts": [{"text": "Test"}]}],
                 config=types.GenerateContentConfig(
                     temperature=0.5,
@@ -368,7 +368,7 @@ class TestGreyCloudBatch:
         thinking = types.ThinkingConfig(thinking_budget=2048)
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-4-argon",
+                model="gemini-3.8-flash",
                 contents=[{"role": "user", "parts": [{"text": "Think"}]}],
                 config=types.GenerateContentConfig(
                     temperature=0.5,
@@ -404,7 +404,7 @@ class TestGreyCloudBatch:
         """Test that None config values are omitted from JSONL"""
         batch_requests = [
             types.InlinedRequest(
-                model="gemini-4-argon",
+                model="gemini-3.8-flash",
                 contents=[{"role": "user", "parts": [{"text": "Test"}]}],
                 config=types.GenerateContentConfig(temperature=0.5),
             )
@@ -430,6 +430,105 @@ class TestGreyCloudBatch:
                 gen_cfg = req["generationConfig"]
                 # Only temperature should be present, not nulls for other fields
                 assert gen_cfg == {"temperature": 0.5}
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_gemini_4_omits_sampling_and_thinking_budget(
+        self, sample_config
+    ):
+        """Test that Gemini 4 batch JSONL omits temperature, topP, topK, thinkingBudget."""
+        thinking = types.ThinkingConfig(
+            thinking_budget=2048,
+            thinking_level="HIGH",
+            include_thoughts=True,
+        )
+        batch_requests = [
+            types.InlinedRequest(
+                model="gemini-4-argon",
+                contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+                config=types.GenerateContentConfig(
+                    temperature=0.7,
+                    top_p=0.9,
+                    top_k=20,
+                    max_output_tokens=1024,
+                    thinking_config=thinking,
+                ),
+            )
+        ]
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage") as mock_storage:
+                mock_storage_client = MagicMock()
+                mock_bucket = MagicMock()
+                mock_blob = MagicMock()
+                mock_storage.Client.return_value = mock_storage_client
+                mock_storage_client.bucket.return_value = mock_bucket
+                mock_bucket.blob.return_value = mock_blob
+
+                batch = GreyCloudBatch(sample_config)
+                batch.upload_batch_requests_to_gcs(
+                    batch_requests=batch_requests, bucket_name="test-bucket"
+                )
+
+                uploaded = mock_blob.upload_from_string.call_args[0][0]
+                req = json.loads(uploaded)["request"]
+                gen_cfg = req["generationConfig"]
+                assert "temperature" not in gen_cfg
+                assert "topP" not in gen_cfg
+                assert "topK" not in gen_cfg
+                assert gen_cfg["maxOutputTokens"] == 1024
+                assert "thinkingConfig" in gen_cfg
+                assert "thinkingBudget" not in gen_cfg["thinkingConfig"]
+                assert gen_cfg["thinkingConfig"]["thinkingLevel"] == "HIGH"
+                assert gen_cfg["thinkingConfig"]["includeThoughts"] is True
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_gemini_4_dict_config_omits_sampling(self, sample_config):
+        """Test that dict configs for Gemini 4 also drop sampling and thinkingBudget."""
+        batch_requests = [
+            types.InlinedRequest(
+                model="gemini-4-argon",
+                contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+                config={
+                    "temperature": 0.7,
+                    "topP": 0.9,
+                    "topK": 20,
+                    "maxOutputTokens": 500,
+                    "thinkingConfig": {
+                        "thinkingBudget": 1024,
+                        "thinkingLevel": "LOW",
+                    },
+                },
+            )
+        ]
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage") as mock_storage:
+                mock_storage_client = MagicMock()
+                mock_bucket = MagicMock()
+                mock_blob = MagicMock()
+                mock_storage.Client.return_value = mock_storage_client
+                mock_storage_client.bucket.return_value = mock_bucket
+                mock_bucket.blob.return_value = mock_blob
+
+                batch = GreyCloudBatch(sample_config)
+                batch.upload_batch_requests_to_gcs(
+                    batch_requests=batch_requests, bucket_name="test-bucket"
+                )
+
+                uploaded = mock_blob.upload_from_string.call_args[0][0]
+                req = json.loads(uploaded)["request"]
+                gen_cfg = req["generationConfig"]
+                assert "temperature" not in gen_cfg
+                assert "topP" not in gen_cfg
+                assert "topK" not in gen_cfg
+                assert gen_cfg["maxOutputTokens"] == 500
+                assert "thinkingConfig" in gen_cfg
+                assert "thinkingBudget" not in gen_cfg["thinkingConfig"]
+                assert gen_cfg["thinkingConfig"]["thinkingLevel"] == "LOW"
 
     @pytest.mark.batch
     @patch("greycloud.batch.GCS_AVAILABLE", True)

@@ -9,7 +9,7 @@ from typing import Callable, List, Optional, Generator, Dict, Any, Union
 from google import genai
 from google.genai import types
 
-from .config import GreyCloudConfig
+from .config import GreyCloudConfig, is_gemini_4
 from .auth import (
     create_client,
     _auto_reauth_allowed,
@@ -379,6 +379,7 @@ class GreyCloudClient:
 
     def _build_generate_config(
         self,
+        model: Optional[str] = None,
         system_instruction: Optional[str] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
@@ -390,7 +391,123 @@ class GreyCloudClient:
         **kwargs,
     ) -> types.GenerateContentConfig:
         """Build GenerateContentConfig from parameters and config"""
-        # Use provided values or fall back to config
+        effective_model = model or self.config.model
+        gemini_4 = is_gemini_4(effective_model)
+
+        if gemini_4:
+            # Check thinking budget
+            if "thinking_budget" in kwargs:
+                raise ValueError(
+                    "Gemini 4 does not support thinking_budget; use thinking_level instead."
+                )
+            if "thinking_config" in kwargs:
+                tc = kwargs["thinking_config"]
+                if getattr(tc, "thinking_budget", None) is not None:
+                    raise ValueError(
+                        "Gemini 4 does not support thinking_budget; use thinking_level instead."
+                    )
+                if isinstance(tc, dict) and "thinking_budget" in tc:
+                    raise ValueError(
+                        "Gemini 4 does not support thinking_budget; use thinking_level instead."
+                    )
+
+            # Check cached_content
+            effective_cached_content = cached_content or kwargs.pop(
+                "cached_content", None
+            )
+            if effective_cached_content:
+                raise ValueError(
+                    f"Model {effective_model} does not support explicit cached_content. "
+                    "Gemini 4 models rely entirely on automatic implicit durable caching in Vertex AI."
+                )
+
+            # Pop unsupported sampling & penalty parameters
+            kwargs.pop("frequency_penalty", None)
+            kwargs.pop("presence_penalty", None)
+            kwargs.pop("temperature", None)
+            kwargs.pop("top_p", None)
+            kwargs.pop("top_k", None)
+
+            # Thinking config for Gemini 4: defaults to MEDIUM, rejects MINIMAL
+            effective_thinking_level = thinking_level
+            if effective_thinking_level is None and "thinking_level" in kwargs:
+                effective_thinking_level = kwargs.pop("thinking_level")
+            if effective_thinking_level is None and "thinking_config" in kwargs:
+                tc = kwargs.pop("thinking_config")
+                if getattr(tc, "thinking_level", None) is not None:
+                    effective_thinking_level = getattr(tc, "thinking_level")
+                elif isinstance(tc, dict) and "thinking_level" in tc:
+                    effective_thinking_level = tc["thinking_level"]
+            if effective_thinking_level is None:
+                effective_thinking_level = self.config.thinking_level or "MEDIUM"
+
+            if hasattr(effective_thinking_level, "value"):
+                effective_thinking_level = effective_thinking_level.value
+
+            level_str = str(effective_thinking_level).upper()
+            if level_str == "MINIMAL":
+                raise ValueError(
+                    "Gemini 4 does not support thinking_level='MINIMAL'; choose from LOW, MEDIUM, HIGH."
+                )
+            if level_str not in ("LOW", "MEDIUM", "HIGH"):
+                raise ValueError(
+                    f"Invalid thinking_level '{effective_thinking_level}' for Gemini 4; choose from LOW, MEDIUM, HIGH."
+                )
+
+            thinking_level_enum = getattr(types.ThinkingLevel, level_str, None)
+            thinking_cfg = types.ThinkingConfig(
+                thinking_level=thinking_level_enum or level_str,  # type: ignore[arg-type]
+                include_thoughts=self.config.include_thoughts,
+            )
+
+            final_max_output_tokens = (
+                max_output_tokens
+                if max_output_tokens is not None
+                else self.config.max_output_tokens
+            )
+            final_safety_settings = (
+                safety_settings
+                if safety_settings is not None
+                else self.config.safety_settings
+            )
+            final_system_instruction = (
+                system_instruction
+                if system_instruction is not None
+                else self.config.system_instruction
+            )
+            final_tools = tools if tools is not None else self._build_tools()
+
+            safety_settings_list: Optional[List[types.SafetySetting]] = None
+            if final_safety_settings is not None:
+                safety_settings_list = []
+                for setting in final_safety_settings:
+                    if isinstance(setting, dict):
+                        safety_settings_list.append(
+                            types.SafetySetting(
+                                category=setting["category"],
+                                threshold=setting["threshold"],
+                            )
+                        )
+                    else:
+                        safety_settings_list.append(setting)
+
+            config_dict: Dict[str, Any] = {
+                "max_output_tokens": final_max_output_tokens,
+                "tools": final_tools,
+                "thinking_config": thinking_cfg,
+            }
+            if safety_settings_list is not None:
+                config_dict["safety_settings"] = safety_settings_list
+            if self.config.seed is not None:
+                config_dict["seed"] = self.config.seed
+            if final_system_instruction:
+                config_dict["system_instruction"] = [
+                    types.Part.from_text(text=final_system_instruction)
+                ]
+            config_dict.update(kwargs)
+            return types.GenerateContentConfig(**config_dict)
+
+        # Non-Gemini 4: retain current behavior
         final_temperature = (
             temperature if temperature is not None else self.config.temperature
         )
@@ -434,7 +551,7 @@ class GreyCloudClient:
                     safety_settings_list.append(setting)
 
         # Build config dict
-        config_dict: Dict[str, Any] = {
+        config_dict = {
             "temperature": final_temperature,
             "top_p": final_top_p,
             "max_output_tokens": final_max_output_tokens,
@@ -529,6 +646,7 @@ class GreyCloudClient:
             on_grounding=on_grounding,
         )
         config = self._build_generate_config(
+            model=model_name,
             system_instruction=system_instruction,
             temperature=temperature,
             top_p=top_p,
@@ -609,6 +727,7 @@ class GreyCloudClient:
             on_grounding=on_grounding,
         )
         config = self._build_generate_config(
+            model=model_name,
             system_instruction=system_instruction,
             temperature=temperature,
             top_p=top_p,
