@@ -1748,3 +1748,207 @@ class TestReauthBehavior:
                     RuntimeError, match="Interactive re-login is disabled"
                 ):
                     client.generate_with_retry(sample_contents, max_retries=1)
+
+
+def test_sync_generate_with_retry_streaming_yields_immediately(mocker):
+    """Verify generator yields chunks as they arrive rather than collecting all into a list."""
+    config = GreyCloudConfig(project_id="test-project")
+    mocker.patch("greycloud.client.create_client")
+    client = GreyCloudClient(config)
+
+    yielded_indices = []
+
+    def mock_stream(*args, **kwargs):
+        for i in range(3):
+            yielded_indices.append(i)
+            chunk = MagicMock()
+            chunk.text = f"chunk-{i}"
+            chunk.candidates = [MagicMock()]
+            chunk.candidates[0].content.parts = [
+                MagicMock(text=f"chunk-{i}", thought=None)
+            ]
+            yield chunk
+
+    client.client.models.generate_content_stream = mock_stream
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text="Hi")])]
+
+    gen = client.generate_with_retry(contents, streaming=True)
+
+    # In unbuffered streaming, merely calling generate_with_retry does not consume the stream
+    assert yielded_indices == []
+
+    # Consuming the first chunk should only produce the first chunk
+    first = next(gen)
+    assert first == "chunk-0"
+    assert yielded_indices == [0]
+
+    # Consuming the second chunk
+    second = next(gen)
+    assert second == "chunk-1"
+    assert yielded_indices == [0, 1]
+
+    # Consuming the third chunk
+    third = next(gen)
+    assert third == "chunk-2"
+    assert yielded_indices == [0, 1, 2]
+
+    with pytest.raises(StopIteration):
+        next(gen)
+
+
+def test_sync_generate_with_retry_streaming_retries_transient_error(mocker):
+    """Verify streaming generator retries on transient error before first yield."""
+    config = GreyCloudConfig(project_id="test-project")
+    mocker.patch("greycloud.client.create_client")
+    client = GreyCloudClient(config)
+
+    calls = 0
+
+    def mock_stream(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise Exception("Transient network reset")
+        chunk = MagicMock()
+        chunk.text = "Success chunk"
+        chunk.candidates = [MagicMock()]
+        chunk.candidates[0].content.parts = [
+            MagicMock(text="Success chunk", thought=None)
+        ]
+        yield chunk
+
+    client.client.models.generate_content_stream = mock_stream
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text="Hi")])]
+
+    mocker.patch("time.sleep")
+    gen = client.generate_with_retry(contents, streaming=True, max_retries=2)
+    chunks = list(gen)
+
+    assert chunks == ["Success chunk"]
+    assert calls == 2
+
+
+def test_sync_generate_with_retry_streaming_retries_auth_error(mocker):
+    """Verify streaming generator recreates client and retries on auth error."""
+    config = GreyCloudConfig(project_id="test-project")
+    mock_create = mocker.patch("greycloud.client.create_client")
+    mock_genai_client = MagicMock()
+    mock_create.return_value = mock_genai_client
+
+    client = GreyCloudClient(config)
+
+    calls = 0
+
+    def mock_stream(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise Exception("401 Unauthorized")
+        chunk = MagicMock()
+        chunk.text = "Recovered chunk"
+        chunk.candidates = [MagicMock()]
+        chunk.candidates[0].content.parts = [
+            MagicMock(text="Recovered chunk", thought=None)
+        ]
+        yield chunk
+
+    mock_genai_client.models.generate_content_stream = mock_stream
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text="Hi")])]
+
+    mocker.patch("time.sleep")
+    gen = client.generate_with_retry(contents, streaming=True, max_retries=2)
+    chunks = list(gen)
+
+    assert chunks == ["Recovered chunk"]
+    assert mock_create.call_count == 2
+
+
+def test_sync_generate_with_retry_streaming_forwards_return_events_and_on_thought(
+    mocker,
+):
+    """Verify return_events and on_thought are forwarded to generate_content_stream."""
+    config = GreyCloudConfig(project_id="test-project")
+    mocker.patch("greycloud.client.create_client")
+    client = GreyCloudClient(config)
+
+    part1 = MagicMock(text="I am thinking", thought=True)
+    chunk1 = MagicMock()
+    chunk1.candidates = [MagicMock()]
+    chunk1.candidates[0].content.parts = [part1]
+
+    part2 = MagicMock(text="Here is answer", thought=False)
+    chunk2 = MagicMock()
+    chunk2.candidates = [MagicMock()]
+    chunk2.candidates[0].content.parts = [part2]
+
+    client.client.models.generate_content_stream = MagicMock(
+        return_value=[chunk1, chunk2]
+    )
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text="Hi")])]
+
+    captured_thoughts = []
+
+    def on_thought(t):
+        captured_thoughts.append(t)
+
+    gen = client.generate_with_retry(
+        contents,
+        streaming=True,
+        return_events=True,
+        on_thought=on_thought,
+    )
+    items = list(gen)
+
+    assert captured_thoughts == ["I am thinking"]
+    assert items == [
+        {"thought": "I am thinking"},
+        {"text": "Here is answer"},
+    ]
+
+
+def test_sync_generate_with_retry_streaming_forwards_request_timeout(mocker):
+    """Verify request_timeout is forwarded in streaming generate_with_retry."""
+    config = GreyCloudConfig(project_id="test-project")
+    mocker.patch("greycloud.client.create_client")
+    client = GreyCloudClient(config)
+
+    mock_stream = MagicMock(return_value=[])
+    client.client.models.generate_content_stream = mock_stream
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text="Hi")])]
+
+    gen = client.generate_with_retry(
+        contents,
+        streaming=True,
+        request_timeout=45,
+    )
+    list(gen)
+
+    call_args = mock_stream.call_args
+    gen_config = call_args[1]["config"]
+    assert gen_config.http_options is not None
+    assert gen_config.http_options.timeout == 45000
+
+
+def test_sync_generate_with_retry_non_streaming_forwards_request_timeout(mocker):
+    """Verify request_timeout is forwarded in non-streaming generate_with_retry."""
+    config = GreyCloudConfig(project_id="test-project")
+    mocker.patch("greycloud.client.create_client")
+    client = GreyCloudClient(config)
+
+    mock_generate = MagicMock()
+    mock_resp = MagicMock()
+    mock_generate.return_value = mock_resp
+    client.client.models.generate_content = mock_generate
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text="Hi")])]
+
+    resp = client.generate_with_retry(
+        contents,
+        streaming=False,
+        request_timeout=50,
+    )
+    assert resp == mock_resp
+
+    call_args = mock_generate.call_args
+    gen_config = call_args[1]["config"]
+    assert gen_config.http_options is not None
+    assert gen_config.http_options.timeout == 50000

@@ -971,6 +971,9 @@ class GreyCloudClient:
         max_retries: int = 5,
         streaming: bool = False,
         return_chunks: bool = False,
+        return_events: bool = False,
+        on_thought: Optional[Callable[[str], Any]] = None,
+        request_timeout: Optional[int] = None,
         **generate_kwargs,
     ) -> Any:
         """
@@ -981,30 +984,32 @@ class GreyCloudClient:
             max_retries: Maximum number of retry attempts
             streaming: If True, use streaming generation
             return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings (only when streaming=True)
+            return_events: If True, yield events dictionary including thoughts (only when streaming=True)
+            on_thought: Optional callback for thoughts (only when streaming=True)
+            request_timeout: Per-request timeout in seconds
             **generate_kwargs: Additional arguments for generate_content or generate_content_stream
 
         Returns:
-            GenerateContentResponse (if streaming=False) or Generator[Union[str, types.GenerateContentResponse]] (if streaming=True)
+            GenerateContentResponse (if streaming=False) or Generator[Union[str, Dict[str, str], types.GenerateContentResponse], None, None] (if streaming=True)
         """
+        if streaming:
+            return self._generate_with_retry_stream(
+                contents,
+                max_retries=max_retries,
+                return_chunks=return_chunks,
+                return_events=return_events,
+                on_thought=on_thought,
+                request_timeout=request_timeout,
+                **generate_kwargs,
+            )
+
         for attempt in range(max_retries + 1):
             try:
-                if streaming:
-                    # For streaming, we need to collect all chunks and yield them
-                    # But we can't easily retry a generator, so we'll collect first
-                    chunks = []
-                    for chunk in self.generate_content_stream(
-                        contents, return_chunks=return_chunks, **generate_kwargs
-                    ):
-                        chunks.append(chunk)
-
-                    # Return a generator that yields the collected chunks
-                    def chunk_generator():
-                        for chunk in chunks:
-                            yield chunk
-
-                    return chunk_generator()
-                else:
-                    return self.generate_content(contents, **generate_kwargs)
+                return self.generate_content(
+                    contents,
+                    request_timeout=request_timeout,
+                    **generate_kwargs,
+                )
             except Exception as e:
                 # Check if this is an authentication error and re-authenticate if needed
                 is_auth_error = self._is_authentication_error(e)
@@ -1071,4 +1076,87 @@ class GreyCloudClient:
                 time.sleep(delay)
 
         # Should never reach here, but just in case
+        raise RuntimeError("Failed to generate content after retries")
+
+    def _generate_with_retry_stream(
+        self,
+        contents: List[types.Content],
+        max_retries: int = 5,
+        return_chunks: bool = False,
+        return_events: bool = False,
+        on_thought: Optional[Callable[[str], Any]] = None,
+        request_timeout: Optional[int] = None,
+        **generate_kwargs,
+    ) -> Generator[
+        Union[str, Dict[str, str], types.GenerateContentResponse], None, None
+    ]:
+        """Generator that yields stream chunks with retry on failure."""
+        for attempt in range(max_retries + 1):
+            try:
+                for item in self.generate_content_stream(
+                    contents,
+                    return_chunks=return_chunks,
+                    return_events=return_events,
+                    on_thought=on_thought,
+                    request_timeout=request_timeout,
+                    **generate_kwargs,
+                ):
+                    yield item
+                return
+            except Exception as e:
+                is_auth_error = self._is_authentication_error(e)
+
+                if is_auth_error:
+                    if not self.config.use_api_key:
+                        reauth_success = False
+                        try:
+                            if _auto_reauth_allowed(self.config.auto_reauth):
+                                # Opt-in interactive recovery (browser login);
+                                # never under pytest (see _auto_reauth_allowed).
+                                reauth_success = self._force_reauth()
+                            if not reauth_success:
+                                # Non-interactive self-heal: re-mint credentials
+                                # by recreating the client (get_credentials
+                                # re-runs the ADC/refresh chain). Runs even with
+                                # auto_reauth off; auto_reauth=False keeps a
+                                # nested interactive login out of the retry loop.
+                                try:
+                                    self._recreate_client(auto_reauth=False)
+                                    reauth_success = True
+                                except Exception:
+                                    pass
+
+                            if reauth_success and attempt < max_retries:
+                                time.sleep(1)
+                                continue
+                            elif not reauth_success and attempt >= max_retries:
+                                raise RuntimeError(
+                                    f"Authentication error detected and automatic re-authentication failed after {max_retries + 1} attempts. "
+                                    "Interactive re-login is disabled (auto_reauth=False, AUTO_REAUTH unset, or running under pytest). "
+                                    "Please run 'gcloud auth application-default login' manually to refresh your credentials. "
+                                    f"Original error: {str(e)}"
+                                ) from e
+                            elif not reauth_success:
+                                pass
+                        except Exception as auth_error:
+                            if attempt >= max_retries:
+                                raise RuntimeError(
+                                    f"Re-authentication failed after {max_retries + 1} attempts: {str(auth_error)}. "
+                                    "Please run 'gcloud auth application-default login' manually. "
+                                    f"Original error: {str(e)}"
+                                ) from e
+                    else:
+                        if attempt >= max_retries:
+                            raise RuntimeError(
+                                f"Authentication error detected with use_api_key=True "
+                                "(API-key auth has no re-authentication). "
+                                f"Original error: {str(e)}"
+                            ) from e
+
+                if attempt >= max_retries:
+                    raise
+
+                delay = self.exponential_backoff_with_jitter(attempt)
+                time.sleep(delay)
+
         raise RuntimeError("Failed to generate content after retries")
