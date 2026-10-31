@@ -19,7 +19,7 @@ from typing import List, Optional, Union, Iterator, Dict, Any
 from google import genai
 from google.genai import types
 
-from .config import GreyCloudConfig
+from .config import GreyCloudConfig, is_gemini_4
 from .auth import create_client
 
 # Minimum token requirements by model family
@@ -28,7 +28,6 @@ MIN_TOKENS_BY_MODEL = {
     "gemini-2.5-flash": 1024,
     "gemini-2.5-pro": 4096,
     "gemini-3.8-flash": 1024,
-    "gemini-4-argon": 4096,
 }
 
 # Default minimum if model not recognized
@@ -173,6 +172,12 @@ class GreyCloudCache:
             - Gemini 2.0 Flash: 2,048 tokens
         """
         model_name = model or self.config.model
+        if is_gemini_4(model_name):
+            raise ValueError(
+                f"Model '{model_name}' does not support explicit cache "
+                "creation. Gemini 4 models rely entirely on automatic implicit "
+                "durable caching in Vertex AI."
+            )
         typed_contents = self._contents_to_types(contents)
 
         # Build config

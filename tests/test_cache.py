@@ -31,10 +31,9 @@ class TestGetMinTokensForModel:
         """Gemini 3.8 Flash requires 1024 tokens"""
         assert get_min_tokens_for_model("gemini-3.8-flash") == 1024
 
-    def test_gemini_4_argon(self):
-        """Gemini 4 Argon requires 4096 tokens"""
-        assert get_min_tokens_for_model("gemini-4-argon") == 4096
-        assert get_min_tokens_for_model("gemini-4-argon-preview") == 4096
+    def test_gemini_4_not_in_min_tokens(self):
+        """Gemini 4 models do not use explicit caching / MIN_TOKENS_BY_MODEL"""
+        assert "gemini-4-argon" not in MIN_TOKENS_BY_MODEL
 
     def test_gemini_2_0(self):
         """Gemini 2.0 requires 2048 tokens"""
@@ -47,7 +46,7 @@ class TestGetMinTokensForModel:
     def test_case_insensitive(self):
         """Model name matching is case insensitive"""
         assert get_min_tokens_for_model("GEMINI-2.5-FLASH") == 1024
-        assert get_min_tokens_for_model("gemini-4-argon") == 4096
+        assert get_min_tokens_for_model("GEMINI-2.5-PRO") == 4096
 
 
 class TestGreyCloudCacheInit:
@@ -641,3 +640,12 @@ class TestGreyCloudCacheIntegration:
             mock_genai_client.caches.delete.assert_called_once_with(
                 name="cachedContents/lifecycle-test"
             )
+
+
+def test_create_cache_rejects_gemini_4():
+    client = GreyCloudCache(GreyCloudConfig(project_id="test-proj"))
+    with pytest.raises(ValueError, match="automatic implicit durable caching"):
+        client.create_cache(
+            contents=[{"role": "user", "parts": [{"text": "hello"}]}],
+            model="gemini-4-argon",
+        )
