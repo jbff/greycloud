@@ -109,7 +109,7 @@ def main():
     - Natural language processing
     - Recommendation systems
     - Fraud detection
-    - Medical diagnosis
+    - Document classification
     - Autonomous vehicles
     - Stock market prediction
     - Customer segmentation

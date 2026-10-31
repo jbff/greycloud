@@ -824,7 +824,7 @@ class TestGroundingQueryAndSkip:
         self, sample_config, mock_generate_response
     ):
         """grounding_query replaces the verbatim last user message as the
-        Discovery Engine query (workflow-instruction turns are not clinical
+        Discovery Engine query (workflow-instruction turns are not domain query
         content); injection still targets the last user message."""
         with patch("greycloud.client.create_client") as mock_create:
             with patch(
@@ -840,13 +840,13 @@ class TestGroundingQueryAndSkip:
                 client = GreyCloudClient(_grounding_config())
                 client.generate_content(
                     self._contents("Great, now let's do the summary."),
-                    grounding_query="ABAS functional impairment adult collateral reports",
+                    grounding_query="distributed consensus raft election safety invariants",
                 )
 
         mock_search.assert_called_once()
         assert (
             mock_search.call_args[0][1]
-            == "ABAS functional impairment adult collateral reports"
+            == "distributed consensus raft election safety invariants"
         )
 
     def test_generate_content_blank_grounding_query_falls_back_to_user_message(
@@ -983,9 +983,9 @@ class TestGroundingQueryAndSkip:
                 mock_create.return_value = mock_genai_client
 
                 client = GreyCloudClient(_grounding_config(min_grounding_query_chars=5))
-                client.generate_content(self._contents("ABAS impairment domains"))
+                client.generate_content(self._contents("distributed consensus raft"))
 
-        assert mock_search.call_args[0][1] == "ABAS impairment domains"
+        assert mock_search.call_args[0][1] == "distributed consensus raft"
 
     def test_min_grounding_query_chars_applies_to_grounding_query(
         self, sample_config, mock_generate_response
@@ -1007,12 +1007,12 @@ class TestGroundingQueryAndSkip:
                 )
                 client.generate_content(
                     self._contents("ok"),
-                    grounding_query="ABAS functional impairment adult collateral reports",
+                    grounding_query="distributed consensus raft election safety invariants",
                 )
 
         assert (
             mock_search.call_args[0][1]
-            == "ABAS functional impairment adult collateral reports"
+            == "distributed consensus raft election safety invariants"
         )
 
     def test_generate_with_retry_threads_grounding_query(
@@ -1032,10 +1032,10 @@ class TestGroundingQueryAndSkip:
                 client = GreyCloudClient(_grounding_config())
                 client.generate_with_retry(
                     self._contents(),
-                    grounding_query="ABAS functional impairment",
+                    grounding_query="distributed consensus",
                 )
 
-        assert mock_search.call_args[0][1] == "ABAS functional impairment"
+        assert mock_search.call_args[0][1] == "distributed consensus"
 
 
 class TestOnGroundingCallback:

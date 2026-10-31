@@ -1009,13 +1009,13 @@ class TestGroundingQueryAndSkip:
                 client = GreyCloudAsyncClient(_async_grounding_config())
                 await client.generate_content(
                     self._contents("Great, now let's do the summary."),
-                    grounding_query="ABAS functional impairment adult collateral reports",
+                    grounding_query="distributed consensus raft election safety invariants",
                 )
 
         mock_search.assert_called_once()
         assert (
             mock_search.call_args[0][1]
-            == "ABAS functional impairment adult collateral reports"
+            == "distributed consensus raft election safety invariants"
         )
 
     @pytest.mark.asyncio
@@ -1172,9 +1172,9 @@ class TestGroundingQueryAndSkip:
                 client = GreyCloudAsyncClient(
                     _async_grounding_config(min_grounding_query_chars=5)
                 )
-                await client.generate_content(self._contents("ABAS impairment domains"))
+                await client.generate_content(self._contents("distributed consensus raft"))
 
-        assert mock_search.call_args[0][1] == "ABAS impairment domains"
+        assert mock_search.call_args[0][1] == "distributed consensus raft"
 
     @pytest.mark.asyncio
     async def test_min_grounding_query_chars_applies_to_grounding_query(
@@ -1199,12 +1199,12 @@ class TestGroundingQueryAndSkip:
                 )
                 await client.generate_content(
                     self._contents("ok"),
-                    grounding_query="ABAS functional impairment adult collateral reports",
+                    grounding_query="distributed consensus raft election safety invariants",
                 )
 
         assert (
             mock_search.call_args[0][1]
-            == "ABAS functional impairment adult collateral reports"
+            == "distributed consensus raft election safety invariants"
         )
 
     @pytest.mark.asyncio
@@ -1227,10 +1227,10 @@ class TestGroundingQueryAndSkip:
                 client = GreyCloudAsyncClient(_async_grounding_config())
                 await client.generate_with_retry(
                     self._contents(),
-                    grounding_query="ABAS functional impairment",
+                    grounding_query="distributed consensus",
                 )
 
-        assert mock_search.call_args[0][1] == "ABAS functional impairment"
+        assert mock_search.call_args[0][1] == "distributed consensus"
 
 
 class TestOnGroundingCallback:
