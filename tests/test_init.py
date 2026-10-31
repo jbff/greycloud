@@ -71,3 +71,14 @@ class TestPackageInit:
         from greycloud import VertexRateLimiter
 
         assert VertexRateLimiter is not None
+
+
+def test_google_genai_dependency_spec():
+    import tomllib
+
+    with open("pyproject.toml", "rb") as f:
+        data = tomllib.load(f)
+    deps = data["project"]["dependencies"]
+    genai_dep = next(d for d in deps if d.startswith("google-genai"))
+    assert ">=2.34.0" in genai_dep
+    assert "<3.0.0" in genai_dep
