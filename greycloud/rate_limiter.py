@@ -57,6 +57,12 @@ class VertexRateLimiter:
         async with self._semaphore:
             return await api_call_coro
 
+    async def reconcile_usage(self, estimated_tokens: int, actual_tokens: int) -> None:
+        """Reconcile actual token consumption (including thoughts) with TPM bucket."""
+        delta = actual_tokens - estimated_tokens
+        if delta > 0:
+            await self._tpm_limiter.acquire(min(delta, self.tpm))
+
     @staticmethod
     def estimate_tokens(text: str) -> int:
         """Estimate token count from text using len//4 heuristic."""

@@ -118,3 +118,65 @@ class TestVertexRateLimiterEstimateTokens:
         # acquired[0] is the RPM bucket's acquire(1); the TPM acquisition
         # (clamped to capacity, not the 500K estimate) comes last.
         assert acquired[-1] == 250_000
+
+
+class TestVertexRateLimiterReconcileUsage:
+    """Tests for reconcile_usage method"""
+
+    @pytest.mark.asyncio
+    async def test_reconcile_usage_acquires_delta_when_actual_exceeds_estimate(
+        self, monkeypatch
+    ):
+        """When actual tokens exceed estimate, acquire the delta from TPM limiter."""
+        import aiolimiter
+
+        acquired = []
+        real_acquire = aiolimiter.AsyncLimiter.acquire
+
+        async def spy_acquire(self, amount=1):
+            acquired.append(amount)
+            await real_acquire(self, amount)
+
+        monkeypatch.setattr(aiolimiter.AsyncLimiter, "acquire", spy_acquire)
+        limiter = VertexRateLimiter(rpm=60, tpm=250_000)
+        # If estimated was 1,000, but actual total was 15,000 (14k reasoning tokens)
+        await limiter.reconcile_usage(estimated_tokens=1000, actual_tokens=15000)
+        assert acquired == [14000]
+
+    @pytest.mark.asyncio
+    async def test_reconcile_usage_does_nothing_when_actual_le_estimate(
+        self, monkeypatch
+    ):
+        """When actual tokens <= estimate, do not acquire anything."""
+        import aiolimiter
+
+        acquired = []
+        real_acquire = aiolimiter.AsyncLimiter.acquire
+
+        async def spy_acquire(self, amount=1):
+            acquired.append(amount)
+            await real_acquire(self, amount)
+
+        monkeypatch.setattr(aiolimiter.AsyncLimiter, "acquire", spy_acquire)
+        limiter = VertexRateLimiter(rpm=60, tpm=250_000)
+        await limiter.reconcile_usage(estimated_tokens=5000, actual_tokens=3000)
+        await limiter.reconcile_usage(estimated_tokens=5000, actual_tokens=5000)
+        assert acquired == []
+
+    @pytest.mark.asyncio
+    async def test_reconcile_usage_clamps_to_tpm(self, monkeypatch):
+        """Delta exceeding TPM bucket capacity is clamped to limiter.tpm."""
+        import aiolimiter
+
+        acquired = []
+        real_acquire = aiolimiter.AsyncLimiter.acquire
+
+        async def spy_acquire(self, amount=1):
+            acquired.append(amount)
+            await real_acquire(self, amount)
+
+        monkeypatch.setattr(aiolimiter.AsyncLimiter, "acquire", spy_acquire)
+        limiter = VertexRateLimiter(rpm=60, tpm=100_000)
+        # Delta is 299,000 > tpm (100,000)
+        await limiter.reconcile_usage(estimated_tokens=1000, actual_tokens=300_000)
+        assert acquired == [100_000]

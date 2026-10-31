@@ -188,6 +188,55 @@ class GreyCloudAsyncClient:
                         total_chars += len(part.text)
         return max(total_chars // 4, 1)
 
+    @staticmethod
+    def _extract_total_tokens(usage_metadata: Any) -> Optional[int]:
+        """Extract positive integer total token count from usage metadata, if available."""
+        if usage_metadata is None:
+            return None
+        total = None
+        if isinstance(usage_metadata, dict):
+            total = usage_metadata.get("total_token_count") or usage_metadata.get(
+                "totalTokenCount"
+            )
+            if not (isinstance(total, int) and not isinstance(total, bool)):
+                prompt = (
+                    usage_metadata.get("prompt_token_count")
+                    or usage_metadata.get("promptTokenCount")
+                    or 0
+                )
+                candidates = (
+                    usage_metadata.get("candidates_token_count")
+                    or usage_metadata.get("candidatesTokenCount")
+                    or 0
+                )
+                thoughts = (
+                    usage_metadata.get("thoughts_token_count")
+                    or usage_metadata.get("thoughtsTokenCount")
+                    or 0
+                )
+                if all(
+                    isinstance(x, int) and not isinstance(x, bool)
+                    for x in (prompt, candidates, thoughts)
+                ):
+                    summed = prompt + candidates + thoughts
+                    total = summed if summed > 0 else None
+        else:
+            total = getattr(usage_metadata, "total_token_count", None)
+            if not (isinstance(total, int) and not isinstance(total, bool)):
+                prompt = getattr(usage_metadata, "prompt_token_count", 0) or 0
+                candidates = getattr(usage_metadata, "candidates_token_count", 0) or 0
+                thoughts = getattr(usage_metadata, "thoughts_token_count", 0) or 0
+                if all(
+                    isinstance(x, int) and not isinstance(x, bool)
+                    for x in (prompt, candidates, thoughts)
+                ):
+                    summed = prompt + candidates + thoughts
+                    total = summed if summed > 0 else None
+
+        if isinstance(total, int) and not isinstance(total, bool) and total > 0:
+            return total
+        return None
+
     def _build_tools(self) -> List[types.Tool]:
         """Build tools list based on configuration.
 
@@ -635,12 +684,17 @@ class GreyCloudAsyncClient:
         )
         # Token estimate accounts for any injected grounding block.
         token_est = self._estimate_prompt_tokens(contents)
-        return await self.rate_limiter.call_with_limits(
+        response = await self.rate_limiter.call_with_limits(
             token_est,
             self._client.aio.models.generate_content(
                 model=model_name, contents=contents, config=config
             ),
         )
+        usage_metadata = getattr(response, "usage_metadata", None)
+        total_tokens = self._extract_total_tokens(usage_metadata)
+        if total_tokens is not None and total_tokens > 0:
+            await self.rate_limiter.reconcile_usage(token_est, total_tokens)
+        return response
 
     async def generate_content_stream(
         self,
@@ -722,47 +776,58 @@ class GreyCloudAsyncClient:
             )
 
         stream = await self.rate_limiter.call_with_limits(token_est, _start_stream())
-        async for chunk in stream:
-            if return_chunks:
-                yield chunk
-                continue
+        total_tokens: Optional[int] = None
+        try:
+            async for chunk in stream:
+                meta = getattr(chunk, "usage_metadata", None)
+                if meta is not None:
+                    tot = self._extract_total_tokens(meta)
+                    if tot is not None and tot > 0:
+                        total_tokens = tot
 
-            if not (
-                chunk.candidates
-                and chunk.candidates[0].content
-                and chunk.candidates[0].content.parts
-            ):
-                continue
-
-            for part in chunk.candidates[0].content.parts:
-                is_thought = getattr(part, "thought", False) is True
-                text = getattr(part, "text", "") or ""
-                if not isinstance(text, str):
-                    if hasattr(chunk, "text") and isinstance(chunk.text, str):
-                        text = chunk.text
-                    else:
-                        continue
-                if not text:
+                if return_chunks:
+                    yield chunk
                     continue
 
-                if is_thought:
-                    if on_thought:
-                        try:
-                            if inspect.iscoroutinefunction(on_thought):
-                                await on_thought(text)
-                            else:
-                                res = on_thought(text)
-                                if inspect.iscoroutine(res):
-                                    await res
-                        except Exception as e:
-                            logger.warning("on_thought callback failed: %s", e)
-                    if return_events:
-                        yield {"thought": text}
-                else:
-                    if return_events:
-                        yield {"text": text}
+                if not (
+                    chunk.candidates
+                    and chunk.candidates[0].content
+                    and chunk.candidates[0].content.parts
+                ):
+                    continue
+
+                for part in chunk.candidates[0].content.parts:
+                    is_thought = getattr(part, "thought", False) is True
+                    text = getattr(part, "text", "") or ""
+                    if not isinstance(text, str):
+                        if hasattr(chunk, "text") and isinstance(chunk.text, str):
+                            text = chunk.text
+                        else:
+                            continue
+                    if not text:
+                        continue
+
+                    if is_thought:
+                        if on_thought:
+                            try:
+                                if inspect.iscoroutinefunction(on_thought):
+                                    await on_thought(text)
+                                else:
+                                    res = on_thought(text)
+                                    if inspect.iscoroutine(res):
+                                        await res
+                            except Exception as e:
+                                logger.warning("on_thought callback failed: %s", e)
+                        if return_events:
+                            yield {"thought": text}
                     else:
-                        yield text
+                        if return_events:
+                            yield {"text": text}
+                        else:
+                            yield text
+        finally:
+            if total_tokens is not None and total_tokens > 0:
+                await self.rate_limiter.reconcile_usage(token_est, total_tokens)
 
     async def count_tokens(
         self,

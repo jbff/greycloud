@@ -396,6 +396,53 @@ class TestGreyCloudAsyncClientGenerate:
             assert cfg.http_options is not None
             assert cfg.http_options.timeout == 55000
 
+    @pytest.mark.asyncio
+    async def test_generate_content_reconciles_usage(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_content calls rate_limiter.reconcile_usage when usage_metadata has total_token_count"""
+        mock_response = MagicMock()
+        mock_response.text = "Hello world"
+        mock_meta = MagicMock()
+        mock_meta.total_token_count = 1500
+        mock_response.usage_metadata = mock_meta
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            client.rate_limiter.reconcile_usage = AsyncMock()
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            result = await client.generate_content(contents)
+            assert result == mock_response
+            client.rate_limiter.reconcile_usage.assert_awaited_once()
+            args, _ = client.rate_limiter.reconcile_usage.await_args
+            assert args[1] == 1500
+
+    @pytest.mark.asyncio
+    async def test_generate_content_skips_reconcile_without_usage_metadata(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_content skips reconcile_usage when usage_metadata is None"""
+        mock_response = MagicMock()
+        mock_response.text = "Hello world"
+        mock_response.usage_metadata = None
+        mock_async_genai_client.aio.models.generate_content.return_value = mock_response
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            client.rate_limiter.reconcile_usage = AsyncMock()
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            await client.generate_content(contents)
+            client.rate_limiter.reconcile_usage.assert_not_called()
+
 
 class TestGreyCloudAsyncClientGenerateContentStream:
     """Tests for async generate_content_stream"""
@@ -715,6 +762,77 @@ class TestGreyCloudAsyncClientGenerateContentStream:
             cfg = call_args[1]["config"]
             assert cfg.http_options is not None
             assert cfg.http_options.timeout == 35000
+
+    @pytest.mark.asyncio
+    async def test_generate_content_stream_reconciles_usage(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_content_stream calls rate_limiter.reconcile_usage upon completion with total_token_count"""
+        chunk1 = MagicMock()
+        chunk1.candidates = [MagicMock()]
+        chunk1.candidates[0].content = MagicMock()
+        chunk1.candidates[0].content.parts = [MagicMock(text="Part 1", thought=False)]
+        chunk1.text = "Part 1"
+        chunk1.usage_metadata = None
+
+        chunk2 = MagicMock()
+        chunk2.candidates = [MagicMock()]
+        chunk2.candidates[0].content = MagicMock()
+        chunk2.candidates[0].content.parts = [MagicMock(text="Part 2", thought=False)]
+        chunk2.text = "Part 2"
+        mock_meta = MagicMock()
+        mock_meta.total_token_count = 2500
+        chunk2.usage_metadata = mock_meta
+
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(chunk1, chunk2)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            client.rate_limiter.reconcile_usage = AsyncMock()
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            chunks = []
+            async for chunk in client.generate_content_stream(contents):
+                chunks.append(chunk)
+
+            assert chunks == ["Part 1", "Part 2"]
+            client.rate_limiter.reconcile_usage.assert_awaited_once()
+            args, _ = client.rate_limiter.reconcile_usage.await_args
+            assert args[1] == 2500
+
+    @pytest.mark.asyncio
+    async def test_generate_content_stream_skips_reconcile_without_usage_metadata(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_content_stream skips reconcile_usage when no chunk has usage_metadata"""
+        chunk1 = MagicMock()
+        chunk1.candidates = [MagicMock()]
+        chunk1.candidates[0].content = MagicMock()
+        chunk1.candidates[0].content.parts = [MagicMock(text="Part 1", thought=False)]
+        chunk1.text = "Part 1"
+        chunk1.usage_metadata = None
+
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=lambda *a, **kw: _mock_stream_awaitable(chunk1)
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            client.rate_limiter.reconcile_usage = AsyncMock()
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            async for _ in client.generate_content_stream(contents):
+                pass
+
+            client.rate_limiter.reconcile_usage.assert_not_called()
 
 
 class TestGreyCloudAsyncClientCountTokens:
