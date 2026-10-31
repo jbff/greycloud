@@ -9,7 +9,6 @@ import asyncio
 import inspect
 import logging
 import random
-import time
 import subprocess
 import sys
 import os
@@ -472,10 +471,14 @@ class GreyCloudAsyncClient:
 
             # Pop unsupported sampling & penalty parameters
             kwargs.pop("frequency_penalty", None)
+            kwargs.pop("frequencyPenalty", None)
             kwargs.pop("presence_penalty", None)
+            kwargs.pop("presencePenalty", None)
             kwargs.pop("temperature", None)
             kwargs.pop("top_p", None)
+            kwargs.pop("topP", None)
             kwargs.pop("top_k", None)
+            kwargs.pop("topK", None)
 
             # Thinking config for Gemini 4: defaults to MEDIUM, rejects MINIMAL
             effective_thinking_level = thinking_level
@@ -858,19 +861,42 @@ class GreyCloudAsyncClient:
         base_delay: float = 2.0,
         max_delay: float = 60.0,
         return_chunks: bool = False,
+        return_events: bool = False,
+        on_thought: Optional[Callable[[str], Any]] = None,
+        request_timeout: Optional[int] = None,
         **generate_kwargs,
     ) -> Union[
         types.GenerateContentResponse,
         AsyncGenerator[Union[str, Dict[str, str], types.GenerateContentResponse], None],
     ]:
-        """Generate content with exponential backoff retry. If streaming=True, returns an async generator of text chunks or raw response objects."""
+        """
+        Generate content with exponential backoff retry.
+
+        Args:
+            contents: List of Content objects
+            max_retries: Maximum number of retry attempts
+            streaming: If True, use streaming generation
+            base_delay: Initial retry delay in seconds
+            max_delay: Maximum retry delay in seconds
+            return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings (only when streaming=True)
+            return_events: If True, yield structured dict events ({"thought": ...} or {"text": ...}) (only when streaming=True)
+            on_thought: Optional sync or async callback invoked with thought text as thinking tokens arrive (only when streaming=True)
+            request_timeout: Per-request timeout in seconds
+            **generate_kwargs: Additional arguments for generate_content or generate_content_stream
+
+        Returns:
+            GenerateContentResponse (if streaming=False) or AsyncGenerator (if streaming=True)
+        """
         if streaming:
             return self._generate_with_retry_stream(
                 contents,
-                max_retries,
-                base_delay,
-                max_delay,
+                max_retries=max_retries,
+                base_delay=base_delay,
+                max_delay=max_delay,
                 return_chunks=return_chunks,
+                return_events=return_events,
+                on_thought=on_thought,
+                request_timeout=request_timeout,
                 **generate_kwargs,
             )
         # Route through generate_content (mirroring the sync client) so every
@@ -879,7 +905,11 @@ class GreyCloudAsyncClient:
         # (retries are rare and a search is cheap).
         for attempt in range(max_retries + 1):
             try:
-                return await self.generate_content(contents, **generate_kwargs)
+                return await self.generate_content(
+                    contents,
+                    request_timeout=request_timeout,
+                    **generate_kwargs,
+                )
             except Exception as e:
                 is_auth_error = self._is_authentication_error(e)
 
@@ -944,23 +974,35 @@ class GreyCloudAsyncClient:
     async def _generate_with_retry_stream(
         self,
         contents: List[types.Content],
-        max_retries: int,
-        base_delay: float,
-        max_delay: float,
+        max_retries: int = 5,
+        base_delay: float = 2.0,
+        max_delay: float = 60.0,
         return_chunks: bool = False,
+        return_events: bool = False,
+        on_thought: Optional[Callable[[str], Any]] = None,
+        request_timeout: Optional[int] = None,
         **generate_kwargs,
     ) -> AsyncGenerator[
         Union[str, Dict[str, str], types.GenerateContentResponse], None
     ]:
         """Async generator that yields stream chunks with retry on failure."""
+        has_yielded = False
         for attempt in range(max_retries + 1):
             try:
                 async for chunk in self.generate_content_stream(
-                    contents, return_chunks=return_chunks, **generate_kwargs
+                    contents,
+                    return_chunks=return_chunks,
+                    return_events=return_events,
+                    on_thought=on_thought,
+                    request_timeout=request_timeout,
+                    **generate_kwargs,
                 ):
+                    has_yielded = True
                     yield chunk
                 return
             except Exception as e:
+                if has_yielded:
+                    raise
                 is_auth_error = self._is_authentication_error(e)
 
                 if is_auth_error:

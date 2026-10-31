@@ -14,7 +14,6 @@ Key concepts:
 """
 
 import datetime
-from pathlib import Path
 from typing import List, Optional, Union, Iterator, Dict, Any
 from google import genai
 from google.genai import types
@@ -402,6 +401,11 @@ class GreyCloudCache:
             GenerateContentResponse
         """
         model_name = model or self.config.model
+        if is_gemini_4(model_name):
+            raise ValueError(
+                f"Model '{model_name}' does not support explicit cached_content. "
+                "Gemini 4 models rely entirely on automatic implicit durable caching in Vertex AI."
+            )
 
         # Convert prompt to contents
         if isinstance(prompt, str):
@@ -483,6 +487,11 @@ class GreyCloudCache:
             str: Chunks of response text
         """
         model_name = model or self.config.model
+        if is_gemini_4(model_name):
+            raise ValueError(
+                f"Model '{model_name}' does not support explicit cached_content. "
+                "Gemini 4 models rely entirely on automatic implicit durable caching in Vertex AI."
+            )
 
         # Convert prompt to contents
         if isinstance(prompt, str):

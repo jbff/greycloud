@@ -873,6 +873,38 @@ class TestGemini4ImplicitCachingContract:
                     model="gemini-4-argon",
                 )
 
+    def test_cache_client_generate_with_cache_rejects_gemini_4(self, argon_config):
+        """generate_with_cache rejects Gemini 4 models."""
+        with patch("greycloud.cache.create_client"):
+            cache = GreyCloudCache(argon_config)
+            with pytest.raises(
+                ValueError,
+                match="does not support explicit cached_content.*automatic implicit durable caching",
+            ):
+                cache.generate_with_cache(
+                    cache_name="cachedContents/paxos-spec-cache-001",
+                    prompt="summarize",
+                    model="gemini-4-argon",
+                )
+
+    def test_cache_client_generate_with_cache_stream_rejects_gemini_4(
+        self, argon_config
+    ):
+        """generate_with_cache_stream rejects Gemini 4 models."""
+        with patch("greycloud.cache.create_client"):
+            cache = GreyCloudCache(argon_config)
+            with pytest.raises(
+                ValueError,
+                match="does not support explicit cached_content.*automatic implicit durable caching",
+            ):
+                list(
+                    cache.generate_with_cache_stream(
+                        cache_name="cachedContents/paxos-spec-cache-001",
+                        prompt="summarize",
+                        model="gemini-4-argon",
+                    )
+                )
+
     def test_min_tokens_by_model_excludes_gemini_4(self):
         """MIN_TOKENS_BY_MODEL table must not contain gemini-4 references."""
         assert "gemini-4-argon" not in MIN_TOKENS_BY_MODEL

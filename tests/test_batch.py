@@ -2,11 +2,9 @@
 
 import json
 import pytest
-from unittest.mock import patch, MagicMock, mock_open
-from pathlib import Path
-from datetime import datetime
+from unittest.mock import patch, MagicMock
 from google.genai import types
-from greycloud.batch import GreyCloudBatch, GCS_AVAILABLE
+from greycloud.batch import GreyCloudBatch
 from greycloud.config import GreyCloudConfig
 
 

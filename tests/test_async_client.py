@@ -1,7 +1,6 @@
 """Tests for GreyCloudAsyncClient"""
 
 import os
-import sys
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -169,6 +168,24 @@ class TestGreyCloudAsyncClientConfigBuilding:
             assert cfg.thinking_config is not None
             assert cfg.thinking_config.thinking_level == "MEDIUM"
             assert cfg.thinking_config.include_thoughts is True
+
+    def test_build_generate_config_gemini_4_strips_camel_case_penalties_and_sampling(
+        self, async_sample_config
+    ):
+        """Gemini 4 models strip camelCase sampling and penalty parameters from kwargs."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            cfg = client._build_generate_config(
+                model="gemini-4-argon",
+                frequencyPenalty=0.5,
+                presencePenalty=0.5,
+                topP=0.9,
+                topK=40,
+            )
+            assert cfg.top_p is None
+            assert cfg.top_k is None
+            assert cfg.frequency_penalty is None
+            assert cfg.presence_penalty is None
 
     def test_build_generate_config_gemini_4_rejects_cached_content(
         self, async_sample_config
@@ -956,19 +973,20 @@ class TestGreyCloudAsyncClientRetry:
             assert chunks == ["Hello ", "World"]
 
     @pytest.mark.asyncio
-    async def test_generate_with_retry_streaming_retries_on_exception(
+    async def test_generate_with_retry_streaming_retries_before_first_yield(
         self, async_sample_config, mock_async_genai_client
     ):
-        """generate_with_retry(streaming=True) retries on stream exception"""
+        """generate_with_retry(streaming=True) retries when exception occurs before first yield."""
         mock_chunk = MagicMock()
         mock_chunk.candidates = [MagicMock()]
         mock_chunk.candidates[0].content = MagicMock()
         mock_chunk.candidates[0].content.parts = [MagicMock()]
         mock_chunk.text = "OK"
 
-        async def stream_raise_then_ok():
-            yield mock_chunk  # first chunk
-            raise RuntimeError("stream broken")
+        async def stream_raise_immediately():
+            if False:
+                yield
+            raise RuntimeError("stream connect failed")
 
         async def stream_ok():
             yield mock_chunk
@@ -979,7 +997,7 @@ class TestGreyCloudAsyncClientRetry:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return stream_raise_then_ok()
+                return stream_raise_immediately()
             return stream_ok()
 
         mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
@@ -999,8 +1017,118 @@ class TestGreyCloudAsyncClientRetry:
             chunks = []
             async for chunk in gen:
                 chunks.append(chunk)
-            assert chunks == ["OK", "OK"]
+            assert chunks == ["OK"]
             assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_generate_with_retry_streaming_fails_after_first_yield(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """generate_with_retry(streaming=True) immediately raises without retry if failure occurs after first yield."""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.text = "OK"
+
+        async def stream_raise_midway():
+            yield mock_chunk
+            raise RuntimeError("stream broken midway")
+
+        call_count = 0
+
+        async def make_stream_awaitable(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return stream_raise_midway()
+
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=make_stream_awaitable
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            gen = await client.generate_with_retry(
+                contents, streaming=True, max_retries=2
+            )
+            chunks = []
+            with pytest.raises(RuntimeError, match="stream broken midway"):
+                async for chunk in gen:
+                    chunks.append(chunk)
+            assert chunks == ["OK"]
+            assert call_count == 1  # No retry attempted after yielding!
+
+    @pytest.mark.asyncio
+    async def test_generate_with_retry_forwards_streaming_options(
+        self, async_sample_config, mock_async_genai_client, mocker
+    ):
+        """generate_with_retry(streaming=True) forwards return_events, on_thought, and request_timeout."""
+        mock_chunk = MagicMock()
+        mock_chunk.candidates = [MagicMock()]
+        mock_chunk.candidates[0].content = MagicMock()
+        mock_chunk.candidates[0].content.parts = [MagicMock()]
+        mock_chunk.text = "OK"
+
+        async def stream_ok():
+            yield mock_chunk
+
+        async def make_stream_awaitable(*args, **kwargs):
+            return stream_ok()
+
+        mock_async_genai_client.aio.models.generate_content_stream = MagicMock(
+            side_effect=make_stream_awaitable
+        )
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            spy = mocker.spy(client, "generate_content_stream")
+            on_th = MagicMock()
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            gen = await client.generate_with_retry(
+                contents,
+                streaming=True,
+                return_events=True,
+                on_thought=on_th,
+                request_timeout=45,
+            )
+            async for _ in gen:
+                pass
+            spy.assert_called_once()
+            _, kwargs = spy.call_args
+            assert kwargs["return_events"] is True
+            assert kwargs["on_thought"] is on_th
+            assert kwargs["request_timeout"] == 45
+
+    @pytest.mark.asyncio
+    async def test_generate_with_retry_forwards_request_timeout(
+        self, async_sample_config, mock_async_genai_client, mocker
+    ):
+        """generate_with_retry(streaming=False) forwards request_timeout to generate_content."""
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            spy = mocker.spy(client, "generate_content")
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            await client.generate_with_retry(
+                contents,
+                streaming=False,
+                request_timeout=60,
+            )
+            spy.assert_called_once()
+            _, kwargs = spy.call_args
+            assert kwargs["request_timeout"] == 60
 
 
 class TestGreyCloudAsyncClientAuthError:
@@ -1101,8 +1229,6 @@ class TestGreyCloudAsyncClientAuthError:
         visit in their browser. We must NOT suppress this output with --quiet
         or capture_output=True, otherwise the user cannot complete the flow.
         """
-        import subprocess
-
         config = GreyCloudConfig(
             project_id="test-project-id",
             location="us-east4",
@@ -1147,8 +1273,6 @@ class TestGreyCloudAsyncClientAuthError:
         In non-interactive environments, we should use --no-browser to get a URL
         the user can visit manually, but still NOT use --quiet so they can see it.
         """
-        import subprocess
-
         config = GreyCloudConfig(
             project_id="test-project-id",
             location="us-east4",

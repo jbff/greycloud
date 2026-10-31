@@ -459,10 +459,14 @@ class GreyCloudClient:
 
             # Pop unsupported sampling & penalty parameters
             kwargs.pop("frequency_penalty", None)
+            kwargs.pop("frequencyPenalty", None)
             kwargs.pop("presence_penalty", None)
+            kwargs.pop("presencePenalty", None)
             kwargs.pop("temperature", None)
             kwargs.pop("top_p", None)
+            kwargs.pop("topP", None)
             kwargs.pop("top_k", None)
+            kwargs.pop("topK", None)
 
             # Thinking config for Gemini 4: defaults to MEDIUM, rejects MINIMAL
             effective_thinking_level = thinking_level
@@ -1091,6 +1095,7 @@ class GreyCloudClient:
         Union[str, Dict[str, str], types.GenerateContentResponse], None, None
     ]:
         """Generator that yields stream chunks with retry on failure."""
+        has_yielded = False
         for attempt in range(max_retries + 1):
             try:
                 for item in self.generate_content_stream(
@@ -1101,9 +1106,12 @@ class GreyCloudClient:
                     request_timeout=request_timeout,
                     **generate_kwargs,
                 ):
+                    has_yielded = True
                     yield item
                 return
             except Exception as e:
+                if has_yielded:
+                    raise
                 is_auth_error = self._is_authentication_error(e)
 
                 if is_auth_error:

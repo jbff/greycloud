@@ -62,7 +62,7 @@ class TestGreyCloudClient:
             mock_create.return_value = mock_genai_client
 
             client = GreyCloudClient(sample_config)
-            response = client.generate_content(
+            _ = client.generate_content(
                 sample_contents,
                 temperature=0.5,
                 max_output_tokens=1000,
@@ -388,9 +388,7 @@ class TestGreyCloudClient:
             mock_create.return_value = mock_genai_client
 
             client = GreyCloudClient(sample_config)
-            count = client.count_tokens(
-                sample_contents, system_instruction="System prompt"
-            )
+            _ = client.count_tokens(sample_contents, system_instruction="System prompt")
 
             call_args = mock_genai_client.models.count_tokens.call_args
             assert call_args[1]["config"] is not None
@@ -521,6 +519,25 @@ class TestGreyCloudClient:
             assert cfg.thinking_config is not None
             assert cfg.thinking_config.thinking_level == "MEDIUM"
             assert cfg.thinking_config.include_thoughts is True
+
+    def test_build_generate_config_gemini_4_strips_camel_case_penalties_and_sampling(
+        self, sample_config
+    ):
+        """Gemini 4 models strip camelCase sampling and penalty parameters from kwargs."""
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            client = GreyCloudClient(sample_config)
+            cfg = client._build_generate_config(
+                model="gemini-4-argon",
+                frequencyPenalty=0.5,
+                presencePenalty=0.5,
+                topP=0.9,
+                topK=40,
+            )
+            assert cfg.top_p is None
+            assert cfg.top_k is None
+            assert cfg.frequency_penalty is None
+            assert cfg.presence_penalty is None
 
     def test_build_generate_config_gemini_4_rejects_cached_content(self, sample_config):
         """Gemini 4 models reject explicit cached_content."""
@@ -1861,6 +1878,38 @@ def test_sync_generate_with_retry_streaming_retries_auth_error(mocker):
 
     assert chunks == ["Recovered chunk"]
     assert mock_create.call_count == 2
+
+
+def test_sync_generate_with_retry_streaming_fails_after_first_yield(mocker):
+    """Verify streaming generator immediately raises without retry if failure occurs after first yield."""
+    config = GreyCloudConfig(project_id="test-project")
+    mocker.patch("greycloud.client.create_client")
+    client = GreyCloudClient(config)
+
+    calls = 0
+
+    def mock_stream(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        chunk = MagicMock()
+        chunk.text = "First chunk"
+        chunk.candidates = [MagicMock()]
+        chunk.candidates[0].content.parts = [
+            MagicMock(text="First chunk", thought=None)
+        ]
+        yield chunk
+        raise RuntimeError("Mid-stream connection drop")
+
+    client.client.models.generate_content_stream = mock_stream
+    contents = [types.Content(role="user", parts=[types.Part.from_text(text="Hi")])]
+
+    mocker.patch("time.sleep")
+    gen = client.generate_with_retry(contents, streaming=True, max_retries=2)
+    assert next(gen) == "First chunk"
+    with pytest.raises(RuntimeError, match="Mid-stream connection drop"):
+        next(gen)
+
+    assert calls == 1  # No retry attempted after first yield!
 
 
 def test_sync_generate_with_retry_streaming_forwards_return_events_and_on_thought(

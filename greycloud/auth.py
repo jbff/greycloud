@@ -4,7 +4,6 @@ Authentication utilities for GreyCloud
 
 import os
 import subprocess
-import sys
 from typing import Optional
 
 try:

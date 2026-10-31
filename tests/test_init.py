@@ -1,14 +1,6 @@
 """Unit tests for package initialization"""
 
-import pytest
-from greycloud import (
-    GreyCloudConfig,
-    GreyCloudClient,
-    GreyCloudBatch,
-    GreyCloudCache,
-    __version__,
-    __all__,
-)
+from greycloud import __version__, __all__
 
 
 class TestPackageInit:

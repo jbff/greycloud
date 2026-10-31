@@ -2,14 +2,13 @@
 
 import subprocess
 import pytest
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock
 import os
 
 from greycloud.auth import (
     create_client,
     endpoint_for_location,
     get_credentials,
-    HAS_GOOGLE_AUTH,
     _auto_reauth_allowed,
     is_reauth_trigger,
 )
@@ -28,7 +27,7 @@ class TestCreateClient:
             mock_client = MagicMock()
             mock_genai.Client.return_value = mock_client
 
-            client = create_client(
+            _ = create_client(
                 project_id="test-project",
                 location="us-east4",
                 use_api_key=True,
@@ -69,7 +68,7 @@ class TestCreateClient:
                 mock_client = MagicMock()
                 mock_genai.Client.return_value = mock_client
 
-                client = create_client(
+                _ = create_client(
                     project_id="test-project",
                     location="us-east4",
                     sa_email="sa@project.iam.gserviceaccount.com",
@@ -93,7 +92,7 @@ class TestCreateClient:
             mock_client = MagicMock()
             mock_genai.Client.return_value = mock_client
 
-            client = create_client(
+            _ = create_client(
                 project_id="test-project", location="us-east4", use_api_key=False
             )
 
@@ -126,7 +125,7 @@ class TestCreateClient:
             mock_client = MagicMock()
             mock_genai.Client.return_value = mock_client
 
-            client = create_client(
+            _ = create_client(
                 project_id="test-project", location="us-east4", use_api_key=False
             )
 
@@ -170,7 +169,7 @@ class TestCreateClient:
                     mock_client = MagicMock()
                     mock_genai.Client.return_value = mock_client
 
-                    client = create_client(
+                    _ = create_client(
                         project_id="test-project",
                         location="us-east4",
                         use_api_key=False,
@@ -196,7 +195,7 @@ class TestCreateClient:
             mock_client = MagicMock()
             mock_genai.Client.return_value = mock_client
 
-            client = create_client(
+            _ = create_client(
                 project_id="test-project",
                 location="us-east4",
                 sa_email="nonexistent@project.iam.gserviceaccount.com",
@@ -288,7 +287,7 @@ class TestCreateClient:
             mock_client = MagicMock()
             mock_genai.Client.return_value = mock_client
 
-            client = create_client(
+            _ = create_client(
                 project_id="test-project",
                 location="us-east4",
                 use_api_key=True,
@@ -340,7 +339,7 @@ class TestCreateClient:
                     mock_client = MagicMock()
                     mock_genai.Client.return_value = mock_client
 
-                    client = create_client(
+                    _ = create_client(
                         project_id="test-project",
                         location="us-east4",
                         use_api_key=False,
@@ -393,7 +392,7 @@ class TestCreateClient:
                     mock_client = MagicMock()
                     mock_genai.Client.return_value = mock_client
 
-                    client = create_client(
+                    _ = create_client(
                         project_id="test-project",
                         location="us-east4",
                         use_api_key=False,

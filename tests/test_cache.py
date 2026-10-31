@@ -2,7 +2,7 @@
 
 import datetime
 import pytest
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from google.genai import types
 
 from greycloud.cache import (
@@ -648,4 +648,62 @@ def test_create_cache_rejects_gemini_4():
         client.create_cache(
             contents=[{"role": "user", "parts": [{"text": "hello"}]}],
             model="gemini-4-argon",
+        )
+
+
+def test_generate_with_cache_rejects_gemini_4():
+    client = GreyCloudCache(GreyCloudConfig(project_id="test-proj"))
+    with pytest.raises(
+        ValueError,
+        match="does not support explicit cached_content.*automatic implicit durable caching",
+    ):
+        client.generate_with_cache(
+            cache_name="cachedContents/test",
+            prompt="hello",
+            model="gemini-4-argon",
+        )
+
+
+def test_generate_with_cache_rejects_gemini_4_from_config():
+    client = GreyCloudCache(
+        GreyCloudConfig(project_id="test-proj", model="gemini-4-argon")
+    )
+    with pytest.raises(
+        ValueError,
+        match="does not support explicit cached_content.*automatic implicit durable caching",
+    ):
+        client.generate_with_cache(
+            cache_name="cachedContents/test",
+            prompt="hello",
+        )
+
+
+def test_generate_with_cache_stream_rejects_gemini_4():
+    client = GreyCloudCache(GreyCloudConfig(project_id="test-proj"))
+    with pytest.raises(
+        ValueError,
+        match="does not support explicit cached_content.*automatic implicit durable caching",
+    ):
+        list(
+            client.generate_with_cache_stream(
+                cache_name="cachedContents/test",
+                prompt="hello",
+                model="gemini-4-argon",
+            )
+        )
+
+
+def test_generate_with_cache_stream_rejects_gemini_4_from_config():
+    client = GreyCloudCache(
+        GreyCloudConfig(project_id="test-proj", model="gemini-4-argon")
+    )
+    with pytest.raises(
+        ValueError,
+        match="does not support explicit cached_content.*automatic implicit durable caching",
+    ):
+        list(
+            client.generate_with_cache_stream(
+                cache_name="cachedContents/test",
+                prompt="hello",
+            )
         )

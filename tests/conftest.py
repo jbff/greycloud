@@ -2,8 +2,7 @@
 
 import os
 import pytest
-from unittest.mock import Mock, MagicMock, patch
-from typing import Optional
+from unittest.mock import MagicMock, patch
 
 # Set test environment variables
 os.environ.setdefault("PROJECT_ID", "test-project-id")
