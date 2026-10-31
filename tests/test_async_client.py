@@ -706,9 +706,7 @@ class TestGreyCloudAsyncClientGenerateContentStream:
             contents = [
                 types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
             ]
-            async for _ in client.generate_content_stream(
-                contents, request_timeout=35
-            ):
+            async for _ in client.generate_content_stream(contents, request_timeout=35):
                 pass
 
             call_args = (

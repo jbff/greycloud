@@ -663,7 +663,9 @@ class GreyCloudAsyncClient:
         on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
         request_timeout: Optional[int] = None,
         **kwargs,
-    ) -> AsyncGenerator[Union[str, Dict[str, str], types.GenerateContentResponse], None]:
+    ) -> AsyncGenerator[
+        Union[str, Dict[str, str], types.GenerateContentResponse], None
+    ]:
         """Generate content (streaming). Yields text chunks, event dicts, or raw response objects. Rate-limited.
 
         Args:
@@ -882,7 +884,9 @@ class GreyCloudAsyncClient:
         max_delay: float,
         return_chunks: bool = False,
         **generate_kwargs,
-    ) -> AsyncGenerator[Union[str, Dict[str, str], types.GenerateContentResponse], None]:
+    ) -> AsyncGenerator[
+        Union[str, Dict[str, str], types.GenerateContentResponse], None
+    ]:
         """Async generator that yields stream chunks with retry on failure."""
         for attempt in range(max_retries + 1):
             try:

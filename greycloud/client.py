@@ -727,7 +727,9 @@ class GreyCloudClient:
         on_grounding: Optional[Callable[[List[GroundingSource]], None]] = None,
         request_timeout: Optional[int] = None,
         **kwargs,
-    ) -> Generator[Union[str, Dict[str, str], types.GenerateContentResponse], None, None]:
+    ) -> Generator[
+        Union[str, Dict[str, str], types.GenerateContentResponse], None, None
+    ]:
         """
         Generate content (streaming)
 
