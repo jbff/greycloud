@@ -12,9 +12,7 @@ from dataclasses import dataclass, field
 # search over the whole string would classify e.g.
 # "projects/acme-carbon/..." or a tuned endpoint id containing "argon" as
 # Gemini 4 and silently strip parameters that model supports.
-_GEMINI_4_PATTERN = re.compile(
-    r"^(?:gemini-4|argon|carbon)(?:$|[-._])", re.IGNORECASE
-)
+_GEMINI_4_PATTERN = re.compile(r"^(?:gemini-4|argon|carbon)(?:$|[-._])", re.IGNORECASE)
 
 
 def is_gemini_4(model: str) -> bool:

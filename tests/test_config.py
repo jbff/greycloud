@@ -329,8 +329,7 @@ def test_is_gemini_4_ignores_codename_substrings_in_resource_paths():
     from greycloud.config import is_gemini_4
 
     assert (
-        is_gemini_4("projects/acme-carbon/locations/us-central1/endpoints/123")
-        is False
+        is_gemini_4("projects/acme-carbon/locations/us-central1/endpoints/123") is False
     )
     assert is_gemini_4("projects/argon-lab/locations/us-east4/endpoints/456") is False
     assert is_gemini_4("projects/p/locations/l/endpoints/789") is False
