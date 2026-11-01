@@ -1,5 +1,9 @@
 """Unit tests for package initialization"""
 
+from pathlib import Path
+
+import pytest
+
 from greycloud import __version__, __all__
 
 
@@ -101,3 +105,67 @@ class TestCILockGate:
         example = self._ci_example()
         assert "uv lock --check" in example
         assert "uv sync --frozen" in example
+
+
+class TestWheelShipsPyTyped:
+    """F4 guard: a clean-clone (tagged) build must ship greycloud/py.typed.
+
+    The adjudicated finding claimed the wheel omitted the marker; it did not
+    reproduce (pyproject declares [tool.setuptools.package-data] and the
+    wheel RECORD carries the entry). Kept as a build guard so the package
+    config can't silently regress.
+    """
+
+    def test_wheel_contains_py_typed(self, tmp_path):
+        import shutil
+        import subprocess
+        import zipfile
+
+        uv = shutil.which("uv")
+        if uv is None:
+            pytest.skip("uv not available")
+        repo_root = Path(__file__).parent.parent
+        result = subprocess.run(
+            [uv, "build", "--wheel", "-o", str(tmp_path)],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        wheels = list(tmp_path.glob("greycloud-*.whl"))
+        assert len(wheels) == 1
+        names = zipfile.ZipFile(wheels[0]).namelist()
+        assert "greycloud/py.typed" in names
+
+
+class TestContractSuiteCollected:
+    """F4 guard: the Gemini 4 contract suite must be collectable.
+
+    Adjudication: it already collects and passes (48 tests); kept as a guard
+    so a broken contract module fails the suite loudly instead of being
+    silently skipped.
+    """
+
+    def test_gemini4_contract_module_collects(self):
+        import subprocess
+        import sys
+
+        repo_root = Path(__file__).parent.parent
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/test_gemini4_contract.py",
+                "--collect-only",
+                "-q",
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        # collected count line, e.g. "48 tests collected in 0.35s"
+        assert "tests collected" in result.stdout
+        count = int(result.stdout.split(" tests collected")[0].split()[-1])
+        assert count > 0
