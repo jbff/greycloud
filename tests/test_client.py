@@ -132,6 +132,52 @@ class TestGreyCloudClient:
 
             assert chunks == ["Hello ", "World"]
 
+    def test_generate_content_stream_positional_args_keep_pre_050_order(
+        self, sample_config
+    ):
+        """New options must come after the pre-0.5.0 parameters.
+
+        Positional callers from 0.4.x pass return_chunks, retry_unquoted,
+        grounding_query, grounding and on_grounding; inserting return_events
+        and on_thought before them silently rebinds every argument.
+        """
+        import inspect
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            client = GreyCloudClient(sample_config)
+            sig = inspect.signature(client.generate_content_stream)
+
+        cb = MagicMock()
+        bound = sig.bind(
+            [],
+            None,  # model
+            None,  # system_instruction
+            None,  # temperature
+            None,  # top_p
+            None,  # max_output_tokens
+            None,  # safety_settings
+            None,  # tools
+            None,  # thinking_level
+            None,  # cached_content
+            False,  # return_chunks
+            False,  # retry_unquoted
+            "q",  # grounding_query
+            False,  # grounding
+            cb,  # on_grounding
+        )
+        assert bound.arguments.get("retry_unquoted") is False
+        assert bound.arguments.get("grounding_query") == "q"
+        assert bound.arguments.get("grounding") is False
+        assert bound.arguments.get("on_grounding") is cb
+        assert "on_thought" not in bound.arguments
+        assert "return_events" not in bound.arguments
+
+        # The new options are still available by keyword.
+        bound_new = sig.bind([], return_events=True, on_thought=cb)
+        assert bound_new.arguments["return_events"] is True
+        assert bound_new.arguments["on_thought"] is cb
+
     def test_generate_content_stream_return_chunks(
         self, sample_config, sample_contents
     ):

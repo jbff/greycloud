@@ -614,6 +614,41 @@ class TestGreyCloudAsyncClientGenerateContentStream:
                 chunks.append(chunk)
             assert chunks == ["Hello ", "World"]
 
+    def test_generate_content_stream_positional_args_keep_pre_050_order(
+        self, async_sample_config
+    ):
+        """New options must come after the pre-0.5.0 parameters."""
+        import inspect
+
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            sig = inspect.signature(client.generate_content_stream)
+
+        cb = MagicMock()
+        bound = sig.bind(
+            [],
+            None,  # model
+            None,  # system_instruction
+            None,  # temperature
+            None,  # top_p
+            None,  # max_output_tokens
+            None,  # safety_settings
+            None,  # tools
+            None,  # thinking_level
+            None,  # cached_content
+            False,  # return_chunks
+            False,  # retry_unquoted
+            "q",  # grounding_query
+            False,  # grounding
+            cb,  # on_grounding
+        )
+        assert bound.arguments.get("retry_unquoted") is False
+        assert bound.arguments.get("grounding_query") == "q"
+        assert bound.arguments.get("grounding") is False
+        assert bound.arguments.get("on_grounding") is cb
+        assert "on_thought" not in bound.arguments
+        assert "return_events" not in bound.arguments
+
     @pytest.mark.asyncio
     async def test_generate_content_stream_return_chunks(
         self, async_sample_config, mock_async_genai_client
