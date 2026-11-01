@@ -12,7 +12,7 @@ class TestPackageInit:
 
     def test_version(self):
         """Test package version"""
-        assert __version__ == "0.5.0"
+        assert __version__ == "0.5.1"
 
     def test_py_typed_marker_is_packaged(self):
         """PEP 561 marker ships with the package (declared in pyproject)."""
