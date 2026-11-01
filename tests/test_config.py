@@ -344,3 +344,56 @@ def test_is_gemini_4_ignores_codename_substrings_in_resource_paths():
     )
     assert is_gemini_4("argon") is True
     assert is_gemini_4("models/carbon-preview") is True
+
+
+class TestPositionalConfigConstruction:
+    """F16: a 0.4.x caller building GreyCloudConfig with all-positional args
+    must get the same field mapping as 0.4.3 did. Fields inserted into the
+    middle of the dataclass in 0.5.0 (request_timeout, include_thoughts) are
+    keyword-only so they don't shift the positional contract."""
+
+    def test_pre_05_full_positional_construction_maps_like_043(self):
+        cfg = GreyCloudConfig(
+            "test-project",  # project_id
+            "us-east4",  # location
+            False,  # use_api_key
+            "test_api_key.txt",  # api_key_file
+            None,  # sa_email
+            False,  # auto_reauth
+            "mymodel",  # model
+            "https://example.com",  # endpoint
+            "v1",  # api_version
+            0.7,  # temperature
+            0.9,  # top_p
+            None,  # seed
+            123,  # max_output_tokens
+            None,  # safety_settings
+            None,  # system_instruction
+            None,  # vertex_ai_search_datastore
+            False,  # use_vertex_ai_search
+            "inject",  # grounding_mode
+            0,  # min_grounding_query_chars
+            False,  # extractive_content_spec
+            None,  # thinking_level
+            "bucket",  # batch_gcs_bucket
+            "global",  # batch_location
+            30,  # batch_poll_interval
+            None,  # gcs_bucket
+        )
+        assert cfg.project_id == "test-project"
+        assert cfg.api_version == "v1"
+        assert cfg.temperature == 0.7
+        assert cfg.top_p == 0.9
+        assert cfg.max_output_tokens == 123
+        assert cfg.gcs_bucket is None
+        assert cfg.batch_poll_interval == 30
+        # New-in-0.5 fields keep their defaults, untouched positionally:
+        assert cfg.request_timeout == 1200
+        assert cfg.include_thoughts is None
+
+    def test_new_fields_still_settable_by_keyword(self):
+        cfg = GreyCloudConfig(
+            project_id="test-project", request_timeout=60, include_thoughts=True
+        )
+        assert cfg.request_timeout == 60
+        assert cfg.include_thoughts is True

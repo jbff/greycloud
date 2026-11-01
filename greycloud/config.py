@@ -69,7 +69,9 @@ class GreyCloudConfig:
     model: str = "gemini-3.8-flash"
     endpoint: str = "https://aiplatform.googleapis.com"
     api_version: str = "v1beta1"
-    request_timeout: int = 1200
+    # New in 0.5.0 and inserted mid-sequence: keyword-only so a pre-0.5
+    # all-positional construction keeps its 0.4.3 field mapping.
+    request_timeout: int = field(default=1200, kw_only=True)
 
     # Generation parameters
     temperature: float = 1.0
@@ -117,7 +119,9 @@ class GreyCloudConfig:
     # None (default) sends no include_thoughts field on non-Gemini-4 models
     # (0.4.x behavior). Gemini 4 builders resolve None to True (the 0.5.0
     # G4 default). Explicit True/False is forwarded on every model.
-    include_thoughts: Optional[bool] = None
+    # New in 0.5.0 and inserted mid-sequence: keyword-only so a pre-0.5
+    # all-positional construction keeps its 0.4.3 field mapping.
+    include_thoughts: Optional[bool] = field(default=None, kw_only=True)
 
     # Batch processing
     # Buckets must now be configured explicitly when batch/GCS helpers are used.
