@@ -477,11 +477,15 @@ class GreyCloudClient:
 
             # Thinking config for Gemini 4: defaults to MEDIUM, rejects MINIMAL
             effective_thinking_level = thinking_level
-            if effective_thinking_level is None and "thinking_level" in kwargs:
-                effective_thinking_level = kwargs.pop("thinking_level")
-            elif "thinking_level" in kwargs:
-                kwargs.pop("thinking_level")
-            kwargs.pop("thinkingLevel", None)
+            if effective_thinking_level is None:
+                if "thinking_level" in kwargs:
+                    effective_thinking_level = kwargs.pop("thinking_level")
+                elif "thinkingLevel" in kwargs:
+                    # REST-style alias: honor it instead of dropping it.
+                    effective_thinking_level = kwargs.pop("thinkingLevel")
+            else:
+                kwargs.pop("thinking_level", None)
+                kwargs.pop("thinkingLevel", None)
 
             if effective_thinking_level is None:
                 effective_thinking_level = tc_thinking_level

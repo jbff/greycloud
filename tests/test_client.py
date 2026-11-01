@@ -677,6 +677,35 @@ class TestGreyCloudClient:
             assert cfg2.thinking_config.thinking_level == "LOW"
             assert cfg2.thinking_config.include_thoughts is True
 
+    def test_build_generate_config_gemini_4_honors_camelcase_thinking_level(
+        self, sample_config
+    ):
+        """A REST-style thinkingLevel kwarg is honored, not silently dropped."""
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            client = GreyCloudClient(sample_config)
+
+            cfg = client._build_generate_config(
+                model="gemini-4-argon", thinkingLevel="HIGH"
+            )
+            assert cfg.thinking_config.thinking_level == "HIGH"
+
+            # Explicit parameter still wins.
+            cfg2 = client._build_generate_config(
+                model="gemini-4-argon", thinking_level="LOW", thinkingLevel="HIGH"
+            )
+            assert cfg2.thinking_config.thinking_level == "LOW"
+
+            # And the alias is validated like the snake_case form.
+            with pytest.raises(ValueError, match="MINIMAL"):
+                client._build_generate_config(
+                    model="gemini-4-argon", thinkingLevel="MINIMAL"
+                )
+            with pytest.raises(ValueError, match="Invalid thinking_level"):
+                client._build_generate_config(
+                    model="gemini-4-argon", thinkingLevel="BOGUS"
+                )
+
     def test_build_generate_config_gemini_4_kwargs_thinking_config_validates(
         self, sample_config
     ):
