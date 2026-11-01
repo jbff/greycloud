@@ -866,12 +866,14 @@ def _invoke_grounding_callback(
 ) -> None:
     """Invoke a sync ``on_grounding`` callback, never raising.
 
-    A coroutine-function callback is driven to completion with ``asyncio.run``
-    when no loop is running in this thread. When the sync client is used from
-    inside a running loop, the coroutine is scheduled on that loop instead of
-    being dropped, with failures logged from a done-callback — a scheduled
-    callback exception must not surface as an unretrieved-task warning nor
-    break generation.
+    A coroutine-function callback without a running loop is driven to
+    completion inline on a private event loop — deliberately NOT
+    ``asyncio.run``, whose teardown clears the thread's installed loop and
+    would break a caller that manages its own loop. When the sync client is
+    used from inside a running loop, the coroutine is scheduled on that loop
+    instead of being dropped (fire-and-forget), with failures logged from a
+    done-callback — a scheduled callback exception must not surface as an
+    unretrieved-task warning nor break generation.
     """
     try:
         result = on_grounding(sources)
@@ -879,8 +881,13 @@ def _invoke_grounding_callback(
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                # No loop in this thread: drive to completion inline.
-                asyncio.run(result)
+                # No loop in this thread: drive to completion inline on a
+                # private loop without touching the thread's current loop.
+                private_loop = asyncio.new_event_loop()
+                try:
+                    private_loop.run_until_complete(result)
+                finally:
+                    private_loop.close()
             else:
 
                 def _log_task_failure(task: "asyncio.Task") -> None:

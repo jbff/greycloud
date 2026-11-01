@@ -19,6 +19,7 @@ from greycloud.grounding import (
     _MAX_ATTEMPTS,
     _normalize_query,
     _shape_results,
+    _invoke_grounding_callback,
 )
 
 DATASTORE = (
@@ -1286,3 +1287,29 @@ class TestShapeResults:
     def test_non_object_body_raises_value_error(self):
         with pytest.raises(ValueError, match="not a JSON object"):
             _shape_results(["not", "an", "object"], 8000)
+
+
+class TestGroundingCallbackThreadLoopSurvives:
+    """Final-review Important finding: _invoke_grounding_callback drove a
+    coroutine callback inline via asyncio.run, whose teardown clears the
+    thread's installed event loop — the exact defect fixed in the sync
+    client's thought callback. Mirror fix: private loop, thread loop kept."""
+
+    def test_inline_coroutine_callback_keeps_thread_loop(self):
+        import asyncio
+
+        installed = asyncio.new_event_loop()
+        asyncio.set_event_loop(installed)
+        try:
+            captured = []
+
+            async def cb(sources):
+                captured.append(list(sources))
+
+            _invoke_grounding_callback(cb, [])
+            assert captured == [[]]
+            # The installed loop must still be current in this thread.
+            assert asyncio.get_event_loop() is installed
+        finally:
+            asyncio.set_event_loop(None)
+            installed.close()
