@@ -411,6 +411,18 @@ class GreyCloudAsyncClient:
         # Handle request_timeout / http_options
         if request_timeout is None and "request_timeout" in kwargs:
             request_timeout = kwargs.pop("request_timeout")
+        # Same rules as GreyCloudConfig: int (never bool), >= 1. A bad
+        # per-call value must fail before any API/grounding work.
+        if request_timeout is not None:
+            if not isinstance(request_timeout, int) or isinstance(
+                request_timeout, bool
+            ):
+                raise TypeError(
+                    f"request_timeout must be an int; got "
+                    f"{type(request_timeout).__name__}"
+                )
+            if request_timeout < 1:
+                raise ValueError("request_timeout must be >= 1")
         final_http_options = http_options
         # Coerce REST-style dict options before any merge: dicts have no
         # model_copy and would crash (or pass raw) below.

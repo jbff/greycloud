@@ -2828,3 +2828,24 @@ class TestOnThoughtFiresWithReturnChunksAsync:
                 chunks.append(chunk)
         assert captured == ["thinking hard"]
         assert chunks == [chunk1, chunk2]
+
+
+class TestPerCallRequestTimeoutValidationAsync:
+    """F12 async twin: per-call request_timeout validated like the config."""
+
+    @pytest.mark.parametrize(
+        "bad,exc,match",
+        [
+            (0, ValueError, "request_timeout"),
+            (True, TypeError, "request_timeout"),
+            ("120", TypeError, "request_timeout"),
+            (12.5, TypeError, "request_timeout"),
+        ],
+    )
+    def test_async_builder_rejects_bad_request_timeout(
+        self, async_sample_config, bad, exc, match
+    ):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        with pytest.raises(exc, match=match):
+            client._build_generate_config(model="gemini-3.8-flash", request_timeout=bad)
