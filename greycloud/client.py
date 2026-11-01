@@ -27,17 +27,22 @@ from .grounding import (
 logger = logging.getLogger(__name__)
 
 
-def _invoke_thought_callback(on_thought: Callable[[str], Any], text: str) -> None:
+def _invoke_thought_callback(on_thought: Callable[[str], Any], text: str) -> bool:
     """Invoke a sync ``on_thought`` callback, never raising.
+
+    Returns True only when the thought was ACCEPTED FOR DELIVERY: a sync
+    callback completed without raising, or a coroutine callback was driven
+    to completion without raising (no running loop) / scheduled successfully
+    on a running loop (fire-and-forget: a scheduled-callback failure is
+    logged from its done-callback; the thought counts as delivered because
+    retrying the stream would replay it).
 
     A coroutine-function callback without a running loop is driven to
     completion inline on a private event loop — deliberately NOT
     ``asyncio.run``, whose teardown clears the thread's installed loop and
-    would break a caller that manages its own loop. Inside a running loop
-    the coroutine is fire-and-forget: scheduled on that loop with a
-    done-callback that logs failures (awaiting it would block generation);
-    calling it and discarding the coroutine would both drop the thought and
-    emit a "coroutine was never awaited" warning.
+    would break a caller that manages its own loop. The False return lets
+    the retry wrapper distinguish "the callback failed" from "the callback
+    delivered", so a raising callback cannot suppress a legitimate retry.
     """
     try:
         result = on_thought(text)
@@ -50,6 +55,10 @@ def _invoke_thought_callback(on_thought: Callable[[str], Any], text: str) -> Non
                 private_loop = asyncio.new_event_loop()
                 try:
                     private_loop.run_until_complete(result)
+                    return True
+                except Exception as e:
+                    logger.warning("on_thought callback failed: %s", e)
+                    return False
                 finally:
                     private_loop.close()
             else:
@@ -60,8 +69,11 @@ def _invoke_thought_callback(on_thought: Callable[[str], Any], text: str) -> Non
                     logger.warning("on_thought callback failed: %s", task.exception())
 
                 loop.create_task(result).add_done_callback(_log_task_failure)
+                return True
+        return True
     except Exception as e:  # noqa: BLE001 - callback must never break generation
         logger.warning("on_thought callback failed: %s", e)
+        return False
 
 
 class GreyCloudClient:
@@ -1254,14 +1266,14 @@ class GreyCloudClient:
 
         def _tracked_on_thought(text: str) -> Any:
             nonlocal thought_emitted
-            # Mark only after successful delivery: _invoke_thought_callback
-            # swallows (and logs) callback errors, so a failing callback must
-            # not flip thought_emitted and thereby suppress a legitimate
-            # retry of the stream. A delivered thought still blocks replay
-            # (see the has_yielded / thought_emitted guard below).
-            result = on_thought(text)
-            thought_emitted = True
-            return result
+            # Mark only after successful delivery (see _invoke_thought_callback:
+            # False means the callback raised — inline or coroutine-driven —
+            # and must not suppress a legitimate retry). A delivered thought
+            # still blocks replay.
+            delivered = _invoke_thought_callback(on_thought, text)
+            if delivered:
+                thought_emitted = True
+            return None
 
         tracked_on_thought = _tracked_on_thought if on_thought is not None else None
         for attempt in range(max_retries + 1):

@@ -2785,3 +2785,48 @@ class TestDuelingThinkingConfigSpellings:
             model="gemini-4-argon", thinkingConfig={"thinkingLevel": "LOW"}
         )
         assert cfg.thinking_config.thinking_level.value == "LOW"
+
+
+class TestFailedAsyncOnThoughtDoesNotSuppressRetry:
+    """Final-review F8 residual: a RAISING COROUTINE-function on_thought on
+    the sync client must also leave retry intact. The sync wrapper's
+    delivery flag was set when the coroutine object was returned, before
+    the callback body ran (driven inline on a private loop, errors logged
+    and swallowed) — so a transient stream failure aborted after one
+    attempt. The flag may be set only after successful delivery."""
+
+    def test_raising_coroutine_callback_retries_until_exhausted(
+        self, sample_config, sample_contents, caplog
+    ):
+        chunk = TestFailedOnThoughtDoesNotSuppressRetry._thought_chunk()
+
+        def stream():
+            yield chunk
+            raise RuntimeError("connection dropped")
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.side_effect = (
+                lambda *a, **kw: stream()
+            )
+            mock_create.return_value = mock_genai_client
+            client = GreyCloudClient(sample_config)
+
+            async def boom(text):
+                raise RuntimeError("async callback exploded")
+
+            with patch("greycloud.client.time.sleep") as mock_sleep:
+                with caplog.at_level(logging.WARNING, logger="greycloud.client"):
+                    with pytest.raises(RuntimeError, match="connection dropped"):
+                        list(
+                            client.generate_with_retry(
+                                sample_contents,
+                                streaming=True,
+                                on_thought=boom,
+                                max_retries=3,
+                            )
+                        )
+        # one attempt per retry slot, exactly like a sync raising callback
+        assert mock_genai_client.models.generate_content_stream.call_count == 4
+        assert mock_sleep.call_count == 3
+        assert any("async callback exploded" in r.getMessage() for r in caplog.records)
