@@ -1193,3 +1193,65 @@ class TestBatchGemini4Parity:
             assert verdicts["async_builder"][1] == 42
             assert verdicts["batch_dict_branch"][1] == 42
             assert verdicts["batch_object_branch"][1] == 42
+
+
+class TestDirectUploadFallsBackToConfigModel:
+    """F9: upload_batch_requests_to_gcs called directly (no job-level model
+    kwarg) must fall back to config.model for G4 sanitization, exactly like
+    create_batch_job does."""
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_direct_upload_with_g4_config_model_sanitizes(self, sample_config):
+        sample_config.model = "gemini-4-argon"
+        request = types.InlinedRequest(
+            contents=[{"role": "user", "parts": [{"text": "Test"}]}],
+            config=types.GenerateContentConfig(
+                temperature=0.7,
+                top_p=0.9,
+                max_output_tokens=500,
+                thinking_config=types.ThinkingConfig(thinking_level="LOW"),
+            ),
+        )
+        batch, blob = _make_batch(sample_config)
+        batch.upload_batch_requests_to_gcs([request], bucket_name="test-bucket")
+
+        uploaded = blob.upload_from_string.call_args[0][0]
+        req = json.loads(uploaded.strip().split("\n")[0])["request"]
+        # request.model is None; the job-level model line must still carry one
+        # (Vertex batch requires a model in each request line? assert what the
+        # sanitizer guarantees instead) — sanitize sampling like create_batch_job.
+        assert "temperature" not in (req.get("generationConfig") or {})
+        assert "topP" not in (req.get("generationConfig") or {})
+        gen_cfg = req.get("generationConfig") or {}
+        assert gen_cfg.get("maxOutputTokens") == 500
+        assert gen_cfg["thinkingConfig"]["thinkingLevel"] == "LOW"
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_direct_upload_with_g4_config_model_rejects_minimal(self, sample_config):
+        sample_config.model = "gemini-4-argon"
+        request = types.InlinedRequest(
+            contents=[{"role": "user", "parts": [{"text": "Test"}]}],
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_level="MINIMAL"),
+            ),
+        )
+        batch, blob = _make_batch(sample_config)
+        with pytest.raises(ValueError, match="MINIMAL"):
+            batch.upload_batch_requests_to_gcs([request], bucket_name="test-bucket")
+        blob.upload_from_string.assert_not_called()
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_direct_upload_non_g4_config_model_unaffected(self, sample_config):
+        sample_config.model = "gemini-3.8-flash"
+        request = types.InlinedRequest(
+            contents=[{"role": "user", "parts": [{"text": "Test"}]}],
+            config=types.GenerateContentConfig(temperature=0.7),
+        )
+        batch, blob = _make_batch(sample_config)
+        batch.upload_batch_requests_to_gcs([request], bucket_name="test-bucket")
+        uploaded = blob.upload_from_string.call_args[0][0]
+        req = json.loads(uploaded.strip().split("\n")[0])["request"]
+        assert req["generationConfig"]["temperature"] == 0.7

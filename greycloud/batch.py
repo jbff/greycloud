@@ -284,7 +284,11 @@ class GreyCloudBatch:
                 "contents": contents_serializable,
             }
 
-            gemini_4 = is_gemini_4(request.model or model or "")
+            # Direct uploads (no job-level model kwarg) fall back to
+            # config.model so G4 sanitization applies exactly as it does
+            # through create_batch_job.
+            effective_model = request.model or model or self.config.model
+            gemini_4 = is_gemini_4(effective_model or "")
 
             # Serialize generationConfig (camelCase field names, omit None values)
             if request.config:
@@ -294,7 +298,7 @@ class GreyCloudBatch:
                         for key in ("cachedContent", "cached_content"):
                             if cfg_dict.pop(key, None):
                                 raise ValueError(
-                                    f"Model {request.model or model} does not support explicit "
+                                    f"Model {effective_model} does not support explicit "
                                     "cached_content. Gemini 4 models rely entirely on automatic "
                                     "implicit durable caching in Vertex AI."
                                 )
@@ -357,7 +361,7 @@ class GreyCloudBatch:
                     cfg = request.config
                     if gemini_4 and getattr(cfg, "cached_content", None):
                         raise ValueError(
-                            f"Model {request.model or model} does not support explicit "
+                            f"Model {effective_model} does not support explicit "
                             "cached_content. Gemini 4 models rely entirely on automatic "
                             "implicit durable caching in Vertex AI."
                         )
