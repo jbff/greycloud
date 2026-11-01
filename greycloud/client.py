@@ -463,9 +463,7 @@ class GreyCloudClient:
             # Pop both unconditionally so neither can leak into config_dict.
             kw_cached = kwargs.pop("cached_content", None)
             kw_cached_camel = kwargs.pop("cachedContent", None)
-            effective_cached_content = (
-                cached_content or kw_cached or kw_cached_camel
-            )
+            effective_cached_content = cached_content or kw_cached or kw_cached_camel
             if effective_cached_content:
                 raise ValueError(
                     f"Model {effective_model} does not support explicit cached_content. "
@@ -1144,13 +1142,24 @@ class GreyCloudClient:
         # runs grounding or sleeps).
         self._validate_generate_config(request_timeout, generate_kwargs)
         has_yielded = False
+        # A thought delivered to the caller is just as unrepeatable as a
+        # yielded chunk: replaying it would duplicate output the consumer has
+        # already seen. Treat it as having emitted content.
+        thought_emitted = False
+
+        def _tracked_on_thought(text: str) -> Any:
+            nonlocal thought_emitted
+            thought_emitted = True
+            return on_thought(text)
+
+        tracked_on_thought = _tracked_on_thought if on_thought is not None else None
         for attempt in range(max_retries + 1):
             try:
                 for item in self.generate_content_stream(
                     contents,
                     return_chunks=return_chunks,
                     return_events=return_events,
-                    on_thought=on_thought,
+                    on_thought=tracked_on_thought,
                     request_timeout=request_timeout,
                     **generate_kwargs,
                 ):
@@ -1158,7 +1167,7 @@ class GreyCloudClient:
                     yield item
                 return
             except Exception as e:
-                if has_yielded:
+                if has_yielded or thought_emitted:
                     raise
                 is_auth_error = self._is_authentication_error(e)
 

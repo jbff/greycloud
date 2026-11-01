@@ -1082,11 +1082,14 @@ class TestGreyCloudAsyncClientRetry:
             contents = [
                 types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
             ]
-            with patch(
-                "greycloud.async_client.asearch_sources", new_callable=AsyncMock
-            ) as mock_search, patch(
-                "greycloud.async_client.asyncio.sleep", new_callable=AsyncMock
-            ) as mock_sleep:
+            with (
+                patch(
+                    "greycloud.async_client.asearch_sources", new_callable=AsyncMock
+                ) as mock_search,
+                patch(
+                    "greycloud.async_client.asyncio.sleep", new_callable=AsyncMock
+                ) as mock_sleep,
+            ):
                 with pytest.raises(ValueError, match="MINIMAL"):
                     await client.generate_with_retry(
                         contents,
@@ -1095,6 +1098,55 @@ class TestGreyCloudAsyncClientRetry:
                     )
                 mock_search.assert_not_awaited()
                 mock_sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_generate_with_retry_streaming_does_not_replay_thoughts(
+        self, async_sample_config
+    ):
+        """Thoughts are not replayed when a stream fails before any text."""
+        part = MagicMock()
+        part.text = "thinking hard"
+        part.thought = True
+        chunk = MagicMock()
+        chunk.candidates = [MagicMock()]
+        chunk.candidates[0].content = MagicMock()
+        chunk.candidates[0].content.parts = [part]
+
+        async def _failing_awaitable():
+            async def stream():
+                yield chunk
+                raise RuntimeError("connection dropped")
+
+            return stream()
+
+        with patch("greycloud.async_client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.aio.models.generate_content_stream = MagicMock(
+                side_effect=lambda *a, **kw: _failing_awaitable()
+            )
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            captured = []
+
+            async def on_thought(text):
+                captured.append(text)
+
+            stream = await client.generate_with_retry(
+                contents, streaming=True, on_thought=on_thought
+            )
+            with patch(
+                "greycloud.async_client.asyncio.sleep", new_callable=AsyncMock
+            ) as mock_sleep:
+                with pytest.raises(RuntimeError, match="connection dropped"):
+                    async for _ in stream:
+                        pass
+
+            assert captured == ["thinking hard"]
+            mock_sleep.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_generate_with_retry_streaming_fails_fast_on_invalid_config(
@@ -1115,11 +1167,14 @@ class TestGreyCloudAsyncClientRetry:
                 model="gemini-4-argon",
                 thinking_level="MINIMAL",
             )
-            with patch(
-                "greycloud.async_client.asearch_sources", new_callable=AsyncMock
-            ) as mock_search, patch(
-                "greycloud.async_client.asyncio.sleep", new_callable=AsyncMock
-            ) as mock_sleep:
+            with (
+                patch(
+                    "greycloud.async_client.asearch_sources", new_callable=AsyncMock
+                ) as mock_search,
+                patch(
+                    "greycloud.async_client.asyncio.sleep", new_callable=AsyncMock
+                ) as mock_sleep,
+            ):
                 with pytest.raises(ValueError, match="MINIMAL"):
                     async for _ in stream:
                         pass
@@ -1313,7 +1368,10 @@ class TestGreyCloudAsyncClientRetry:
             spy.assert_called_once()
             _, kwargs = spy.call_args
             assert kwargs["return_events"] is True
-            assert kwargs["on_thought"] is on_th
+            # The retry wrapper wraps the callback to detect replay; what
+            # matters is that it still delegates to the caller's callback.
+            await kwargs["on_thought"]("thinking")
+            on_th.assert_called_once_with("thinking")
             assert kwargs["request_timeout"] == 45
 
     @pytest.mark.asyncio

@@ -570,9 +570,7 @@ class TestGreyCloudClient:
             assert config.thinking_config is not None
             assert config.thinking_config.thinking_level == "HIGH"
 
-    def test_build_generate_config_non_gemini_4_includes_thoughts(
-        self, sample_config
-    ):
+    def test_build_generate_config_non_gemini_4_includes_thoughts(self, sample_config):
         """Non-G4 thinking config carries include_thoughts from config.
 
         Without it Vertex returns no thought parts, so on_thought and
@@ -908,9 +906,10 @@ class TestGreyCloudClient:
             mock_create.return_value = MagicMock()
             client = GreyCloudClient(sample_config)
 
-            with patch("greycloud.client.search_sources") as mock_search, patch(
-                "greycloud.client.time.sleep"
-            ) as mock_sleep:
+            with (
+                patch("greycloud.client.search_sources") as mock_search,
+                patch("greycloud.client.time.sleep") as mock_sleep,
+            ):
                 with pytest.raises(ValueError, match="MINIMAL"):
                     client.generate_with_retry(
                         sample_contents,
@@ -920,6 +919,44 @@ class TestGreyCloudClient:
                 mock_search.assert_not_called()
                 mock_sleep.assert_not_called()
             mock_create.return_value.models.generate_content.assert_not_called()
+
+    def test_generate_with_retry_streaming_does_not_replay_thoughts(
+        self, sample_config, sample_contents
+    ):
+        """Thoughts are not replayed when a stream fails before any text."""
+        part = MagicMock()
+        part.text = "thinking hard"
+        part.thought = True
+        chunk = MagicMock()
+        chunk.candidates = [MagicMock()]
+        chunk.candidates[0].content = MagicMock()
+        chunk.candidates[0].content.parts = [part]
+
+        def failing_stream():
+            yield chunk
+            raise RuntimeError("connection dropped")
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.side_effect = (
+                lambda *args, **kwargs: failing_stream()
+            )
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            captured = []
+            with patch("greycloud.client.time.sleep") as mock_sleep:
+                with pytest.raises(RuntimeError, match="connection dropped"):
+                    list(
+                        client.generate_with_retry(
+                            sample_contents,
+                            streaming=True,
+                            on_thought=captured.append,
+                        )
+                    )
+
+            assert captured == ["thinking hard"]
+            mock_sleep.assert_not_called()
 
     def test_generate_with_retry_streaming_fails_fast_on_invalid_config(
         self, sample_config, sample_contents
@@ -937,9 +974,10 @@ class TestGreyCloudClient:
                 model="gemini-4-argon",
                 thinking_level="MINIMAL",
             )
-            with patch("greycloud.client.search_sources") as mock_search, patch(
-                "greycloud.client.time.sleep"
-            ) as mock_sleep:
+            with (
+                patch("greycloud.client.search_sources") as mock_search,
+                patch("greycloud.client.time.sleep") as mock_sleep,
+            ):
                 with pytest.raises(ValueError, match="MINIMAL"):
                     next(stream)
                 mock_search.assert_not_called()
