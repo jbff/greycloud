@@ -524,9 +524,22 @@ class GreyCloudAsyncClient:
                 )
 
             thinking_level_enum = getattr(types.ThinkingLevel, level_str, None)
+            # A caller-supplied include_thoughts (object or dict, camelCase or
+            # snake_case) wins; the config default applies only when the caller
+            # is silent.
+            caller_include_thoughts = self.config.include_thoughts
+            if tc is not None:
+                if isinstance(tc, dict):
+                    ci = tc.get("include_thoughts")
+                    if ci is None:
+                        ci = tc.get("includeThoughts")
+                else:
+                    ci = getattr(tc, "include_thoughts", None)
+                if ci is not None:
+                    caller_include_thoughts = ci
             thinking_cfg = types.ThinkingConfig(
                 thinking_level=thinking_level_enum or level_str,  # type: ignore[arg-type]
-                include_thoughts=self.config.include_thoughts,
+                include_thoughts=caller_include_thoughts,
             )
 
             final_max_output_tokens = (

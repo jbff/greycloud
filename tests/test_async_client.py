@@ -2529,3 +2529,66 @@ class TestValidateBeforeGroundingAsync:
                 ):
                     pass
         assert mock_search.await_count == 0
+
+
+class TestCallerIncludeThoughtsOnGemini4Async:
+    """F5: a caller-supplied include_thoughts must survive the G4 rebuild.
+
+    The G4 branch rebuilds the ThinkingConfig from scratch; it hard-coded
+    self.config.include_thoughts, silently flipping a caller's explicit
+    include_thoughts=False. The config default must apply only when the
+    caller is silent.
+    """
+
+    def _client(self, cfg):
+        with patch("greycloud.async_client.create_client"):
+            return GreyCloudAsyncClient(cfg)
+
+    def test_false_honored_on_g4(self, sample_config):
+        cfg = types.ThinkingConfig(thinking_level="HIGH", include_thoughts=False)
+        built = self._client(sample_config)._build_generate_config(
+            model="gemini-4-argon", thinking_config=cfg
+        )
+        assert built.thinking_config.include_thoughts is False
+
+    def test_dict_camel_honored_on_g4(self, sample_config):
+        built = self._client(sample_config)._build_generate_config(
+            model="gemini-4-argon",
+            thinking_config={"thinkingLevel": "HIGH", "includeThoughts": False},
+        )
+        assert built.thinking_config.include_thoughts is False
+
+    def test_dict_snake_honored_on_g4(self, sample_config):
+        built = self._client(sample_config)._build_generate_config(
+            model="gemini-4-argon",
+            thinking_config={"thinking_level": "HIGH", "include_thoughts": False},
+        )
+        assert built.thinking_config.include_thoughts is False
+
+    def test_config_default_applies_when_caller_silent(self, sample_config):
+        built = self._client(sample_config)._build_generate_config(
+            model="gemini-4-argon", thinking_level="HIGH"
+        )
+        assert built.thinking_config.include_thoughts is True
+
+    def test_config_default_applies_when_tc_has_no_flag(self, sample_config):
+        cfg = types.ThinkingConfig(thinking_level="HIGH")
+        built = self._client(sample_config)._build_generate_config(
+            model="gemini-4-argon", thinking_config=cfg
+        )
+        assert built.thinking_config.include_thoughts is True
+
+    def test_config_false_default_applies_when_caller_silent(self, sample_config):
+        sample_config.include_thoughts = False
+        built = self._client(sample_config)._build_generate_config(
+            model="gemini-4-argon", thinking_level="HIGH"
+        )
+        assert built.thinking_config.include_thoughts is False
+
+    def test_matches_non_g4_result(self, sample_config):
+        """Caller's False must survive identically on the non-G4 path."""
+        cfg = types.ThinkingConfig(thinking_level="HIGH", include_thoughts=False)
+        built = self._client(sample_config)._build_generate_config(
+            model="gemini-3.8-flash", thinking_config=cfg
+        )
+        assert built.thinking_config.include_thoughts is False
