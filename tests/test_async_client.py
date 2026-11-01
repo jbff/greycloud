@@ -2464,3 +2464,68 @@ class TestReauthBehavior:
                     RuntimeError, match="Interactive re-login is disabled"
                 ):
                     await client.generate_with_retry(contents, max_retries=1)
+
+
+class TestValidateBeforeGroundingAsync:
+    """F2: config errors must be raised before any grounding search runs."""
+
+    def _grounding_client(self, async_sample_config):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        client.config.grounding_mode = "inject"
+        client.config.use_vertex_ai_search = True
+        client.config.vertex_ai_search_datastore = "test-datastore"
+        return client
+
+    @staticmethod
+    def _contents():
+        return [
+            types.Content(role="user", parts=[types.Part.from_text(text="Hi there")])
+        ]
+
+    @pytest.mark.parametrize(
+        "invalid_kwargs",
+        [
+            {"cached_content": "caches/1"},
+            {"thinking_level": "MINIMAL"},
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_async_generate_content_rejects_invalid_g4_before_search(
+        self, async_sample_config, invalid_kwargs
+    ):
+        client = self._grounding_client(async_sample_config)
+        with patch("greycloud.async_client.asearch_sources") as mock_search:
+            mock_search.return_value = []
+            with pytest.raises(ValueError):
+                await client.generate_content(
+                    self._contents(),
+                    model="gemini-4-argon",
+                    grounding=True,
+                    **invalid_kwargs,
+                )
+        assert mock_search.await_count == 0
+
+    @pytest.mark.parametrize(
+        "invalid_kwargs",
+        [
+            {"cached_content": "caches/1"},
+            {"thinking_level": "MINIMAL"},
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_async_stream_rejects_invalid_g4_before_search(
+        self, async_sample_config, invalid_kwargs
+    ):
+        client = self._grounding_client(async_sample_config)
+        with patch("greycloud.async_client.asearch_sources") as mock_search:
+            mock_search.return_value = []
+            with pytest.raises(ValueError):
+                async for chunk in client.generate_content_stream(
+                    self._contents(),
+                    model="gemini-4-argon",
+                    grounding=True,
+                    **invalid_kwargs,
+                ):
+                    pass
+        assert mock_search.await_count == 0

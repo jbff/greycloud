@@ -751,14 +751,8 @@ class GreyCloudClient:
             GenerateContentResponse
         """
         model_name = model or self.config.model
-        contents = self._apply_grounding(
-            contents,
-            tools,
-            retry_unquoted=retry_unquoted,
-            grounding_query=grounding_query,
-            grounding=grounding,
-            on_grounding=on_grounding,
-        )
+        # Build and validate the config BEFORE any grounding search: a config
+        # error must raise before a billed Discovery Engine search can run.
         config = self._build_generate_config(
             model=model_name,
             system_instruction=system_instruction,
@@ -771,6 +765,14 @@ class GreyCloudClient:
             cached_content=cached_content,
             request_timeout=request_timeout,
             **kwargs,
+        )
+        contents = self._apply_grounding(
+            contents,
+            tools,
+            retry_unquoted=retry_unquoted,
+            grounding_query=grounding_query,
+            grounding=grounding,
+            on_grounding=on_grounding,
         )
 
         return self.client.models.generate_content(
@@ -839,16 +841,10 @@ class GreyCloudClient:
             Union[str, Dict[str, str], types.GenerateContentResponse]: Chunks of response text, event dicts, or raw response objects
         """
         model_name = model or self.config.model
-        # Generator: the grounding search + injection run when the generator is
+        # Generator: validate the config before grounding so config errors
+        # raise when the generator is created (also before any billed search);
+        # the grounding search + injection still run when the generator is
         # first advanced, before the first yield.
-        contents = self._apply_grounding(
-            contents,
-            tools,
-            retry_unquoted=retry_unquoted,
-            grounding_query=grounding_query,
-            grounding=grounding,
-            on_grounding=on_grounding,
-        )
         config = self._build_generate_config(
             model=model_name,
             system_instruction=system_instruction,
@@ -861,6 +857,14 @@ class GreyCloudClient:
             cached_content=cached_content,
             request_timeout=request_timeout,
             **kwargs,
+        )
+        contents = self._apply_grounding(
+            contents,
+            tools,
+            retry_unquoted=retry_unquoted,
+            grounding_query=grounding_query,
+            grounding=grounding,
+            on_grounding=on_grounding,
         )
 
         for chunk in self.client.models.generate_content_stream(

@@ -701,14 +701,8 @@ class GreyCloudAsyncClient:
             request_timeout: Optional per-call request timeout in seconds.
         """
         model_name = model or self.config.model
-        contents = await self._apply_grounding_async(
-            contents,
-            tools,
-            retry_unquoted=retry_unquoted,
-            grounding_query=grounding_query,
-            grounding=grounding,
-            on_grounding=on_grounding,
-        )
+        # Build and validate the config BEFORE any grounding search: a config
+        # error must raise before a billed Discovery Engine search can run.
         config = self._build_generate_config(
             model=model_name,
             system_instruction=system_instruction,
@@ -721,6 +715,14 @@ class GreyCloudAsyncClient:
             cached_content=cached_content,
             request_timeout=request_timeout,
             **kwargs,
+        )
+        contents = await self._apply_grounding_async(
+            contents,
+            tools,
+            retry_unquoted=retry_unquoted,
+            grounding_query=grounding_query,
+            grounding=grounding,
+            on_grounding=on_grounding,
         )
         # Token estimate accounts for any injected grounding block.
         token_est = self._estimate_prompt_tokens(contents)
@@ -784,16 +786,10 @@ class GreyCloudAsyncClient:
             request_timeout: Optional per-call request timeout in seconds.
         """
         model_name = model or self.config.model
-        # Async generator: the grounding search + injection run when the
+        # Async generator: validate the config before grounding so config
+        # errors raise when the generator is created (also before any billed
+        # search); the grounding search + injection still run when the
         # generator is first advanced, before the first yield.
-        contents = await self._apply_grounding_async(
-            contents,
-            tools,
-            retry_unquoted=retry_unquoted,
-            grounding_query=grounding_query,
-            grounding=grounding,
-            on_grounding=on_grounding,
-        )
         config = self._build_generate_config(
             model=model_name,
             system_instruction=system_instruction,
@@ -806,6 +802,14 @@ class GreyCloudAsyncClient:
             cached_content=cached_content,
             request_timeout=request_timeout,
             **kwargs,
+        )
+        contents = await self._apply_grounding_async(
+            contents,
+            tools,
+            retry_unquoted=retry_unquoted,
+            grounding_query=grounding_query,
+            grounding=grounding,
+            on_grounding=on_grounding,
         )
         # Token estimate accounts for any injected grounding block.
         token_est = self._estimate_prompt_tokens(contents)

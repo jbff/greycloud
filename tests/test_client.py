@@ -2351,3 +2351,59 @@ def test_sync_generate_with_retry_non_streaming_forwards_request_timeout(mocker)
     gen_config = call_args[1]["config"]
     assert gen_config.http_options is not None
     assert gen_config.http_options.timeout == 50000
+
+
+class TestValidateBeforeGrounding:
+    """F2: config errors must be raised before any grounding search runs."""
+
+    def _grounding_client(self, sample_config):
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        client.config.grounding_mode = "inject"
+        client.config.use_vertex_ai_search = True
+        client.config.vertex_ai_search_datastore = "test-datastore"
+        return client
+
+    @pytest.mark.parametrize(
+        "invalid_kwargs",
+        [
+            {"cached_content": "caches/1"},
+            {"thinking_level": "MINIMAL"},
+        ],
+    )
+    def test_generate_content_rejects_invalid_g4_before_search(
+        self, sample_config, sample_contents, invalid_kwargs
+    ):
+        client = self._grounding_client(sample_config)
+        with patch("greycloud.client.search_sources") as mock_search:
+            with pytest.raises(ValueError):
+                client.generate_content(
+                    sample_contents,
+                    model="gemini-4-argon",
+                    grounding=True,
+                    request_timeout=None,
+                    **invalid_kwargs,
+                )
+        assert mock_search.call_count == 0
+
+    @pytest.mark.parametrize(
+        "invalid_kwargs",
+        [
+            {"cached_content": "caches/1"},
+            {"thinking_level": "MINIMAL"},
+        ],
+    )
+    def test_stream_rejects_invalid_g4_before_search(
+        self, sample_config, sample_contents, invalid_kwargs
+    ):
+        client = self._grounding_client(sample_config)
+        with patch("greycloud.client.search_sources") as mock_search:
+            with pytest.raises(ValueError):
+                for _ in client.generate_content_stream(
+                    sample_contents,
+                    model="gemini-4-argon",
+                    grounding=True,
+                    **invalid_kwargs,
+                ):
+                    pass
+        assert mock_search.call_count == 0
