@@ -22,25 +22,26 @@ pip install -e ".[all]"
 To build source and wheel distributions:
 
 ```bash
-# Install build tools
-pip install build
+# With uv (used by the release workflow)
+uv build
 
-# Build distributions
+# Or with standard build tooling
+pip install build
 python -m build
 
-# This creates:
-# - dist/greycloud-0.1.0.tar.gz (source distribution)
-# - dist/greycloud-0.1.0-py3-none-any.whl (wheel)
+# Either way this creates in dist/:
+# - greycloud-<version>.tar.gz (source distribution)
+# - greycloud-<version>-py3-none-any.whl (wheel)
 ```
 
 ### Installing from Built Distribution
 
 ```bash
 # From wheel (recommended)
-pip install dist/greycloud-0.1.0-py3-none-any.whl
+pip install dist/greycloud-<version>-py3-none-any.whl
 
 # From source distribution
-pip install dist/greycloud-0.1.0.tar.gz
+pip install dist/greycloud-<version>.tar.gz
 ```
 
 ### Installing from Git Repository
@@ -50,7 +51,7 @@ pip install dist/greycloud-0.1.0.tar.gz
 pip install git+https://github.com/jbff/greycloud.git
 
 # Install with specific branch/tag
-pip install git+https://github.com/jbff/greycloud.git@v0.1.0
+pip install git+https://github.com/jbff/greycloud.git@v0.5.0
 ```
 
 ## Development Setup

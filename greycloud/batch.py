@@ -237,7 +237,9 @@ class GreyCloudBatch:
             bucket_name: GCS bucket name (defaults to config.batch_gcs_bucket)
             model: Job-level model name, used for sanitization when a request
                 does not carry its own ``model`` (the usual case for
-                ``create_batch_job``)
+                ``create_batch_job``). When both the request and this argument
+                are empty, ``config.model`` is used, so direct uploads get the
+                same Gemini 4 sanitization as ``create_batch_job``
 
         Returns:
             str: GCS URI of uploaded JSONL file

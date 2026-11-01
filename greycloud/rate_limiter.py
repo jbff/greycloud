@@ -62,7 +62,13 @@ class VertexRateLimiter:
             return await api_call_coro
 
     async def reconcile_usage(self, estimated_tokens: int, actual_tokens: int) -> None:
-        """Reconcile actual token consumption (including thoughts) with TPM bucket.
+        """Reconcile actual token consumption (including thoughts) with TPM
+        bucket.
+
+        The delta is measured against what the bucket was actually charged —
+        ``min(estimated_tokens, tpm)`` (see the clamp in
+        :meth:`call_with_limits`) — so reconciliation only adds the
+        newly-learned tokens, never re-paying tokens already accounted for.
 
         Best-effort: when the bucket is already depleted this never waits for
         the next refill window (up to 60s), and a failure is logged rather

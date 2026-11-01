@@ -79,8 +79,11 @@ pytest --durations=10
 - `test_client.py` - Tests for `GreyCloudClient` class
 - `test_async_client.py` - Tests for `GreyCloudAsyncClient` class
 - `test_batch.py` - Tests for `GreyCloudBatch` class
+- `test_cache.py` - Tests for `GreyCloudCache` (context caching utilities)
+- `test_rate_limiter.py` - Tests for `VertexRateLimiter` (RPM/TPM/concurrency limits, reconciliation)
 - `test_grounding.py` - Tests for the Discovery Engine grounding module (endpoint selection, search request shape, snippet extraction, `build_grounding_context`, degrade-to-`[]` contract, credential refresh, 429 retry)
-- `test_init.py` - Tests for package initialization
+- `test_gemini4_contract.py` - Cross-module Gemini 4 contract tests (model-name handling, thinking-level/budget/cached-content rules, batch sanitization) — marked `unit`
+- `test_init.py` - Tests for package initialization plus packaging/CI guards (version sync, `py.typed` wheel content, lock-gate example, marker coverage)
 
 ### What Passing Tests Mean
 
@@ -111,10 +114,19 @@ When all tests pass, you can be confident that:
   - Builds and uploads JSONL batch request files in the format expected by scripts and Vertex: one line per request, each line a JSON object with a `request` key containing `model`, `contents`, and optional `config`/`metadata`
   - Creates batch jobs using the correct model and GCS locations (mocked)
   - Monitors jobs and downloads results; result download looks for `predictions.jsonl` under the job destination prefix
+  - Applies the same Gemini 4 rules as the generate path (sampling-param stripping, thinking-level/budget rejection), in both the dict- and object-config branches of `upload_batch_requests_to_gcs`, with a `config.model` fallback when no job-level model is given
+
+- **Gemini 4 contract (`test_gemini4_contract.py`)**
+  - Pins cross-module behavior: model-name classification, thinking-level/budget/cached-content rules, batch + generate parity
+
+- **Rate limiting (`VertexRateLimiter`)**
+  - Enforces RPM/TPM/concurrency with a clamped TPM acquisition (an estimate above the budget still goes through rather than erroring)
+  - Reconciles usage against the clamped charge (`actual - min(estimate, tpm)`)
 
 - **Package Initialization**
   - Exposes the expected symbols (`GreyCloudConfig`, `GreyCloudClient`, `GreyCloudBatch`)
   - Keeps the version string in sync with `pyproject.toml`
+  - Guards packaging and CI hygiene (PEP 561 `py.typed` in the wheel, `uv lock --check`/`uv sync --frozen` in the CI example, marker coverage)
 
 ### What Passing Tests Do *Not* Guarantee
 

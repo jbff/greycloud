@@ -811,7 +811,10 @@ class GreyCloudClient:
                 being injected (``[]`` when the search ran but found nothing);
                 not invoked when grounding is skipped entirely. Callback
                 exceptions are logged at WARNING and never propagate.
-            request_timeout: Optional per-call request timeout in seconds.
+            request_timeout: Optional per-call request timeout in
+                seconds. Validated like ``GreyCloudConfig.request_timeout``:
+                an int (never a bool) >= 1, rejected with TypeError/ValueError
+                before any API or grounding work.
             **kwargs: Additional parameters for GenerateContentConfig
 
         Returns:
@@ -886,7 +889,10 @@ class GreyCloudClient:
             cached_content: Cache name to use for context (see GreyCloudCache)
             return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings
             return_events: If True, yield structured dict events (``{"thought": ...}`` or ``{"text": ...}``)
-            on_thought: Optional callback invoked with thought text as thinking tokens arrive
+            on_thought: Optional callback invoked with thought text as
+                thinking tokens arrive. Also fires when ``return_chunks``
+                is True: thought text is delivered before the raw chunk is
+                yielded, so raw mode does not starve the callback.
             retry_unquoted: Passed through to the grounding search; see
                 :func:`greycloud.grounding.search_sources`.
             grounding_query: Optional explicit Discovery Engine query used in
@@ -901,17 +907,21 @@ class GreyCloudClient:
                 not invoked when grounding is skipped entirely. Callback
                 exceptions are logged at WARNING and never propagate. Fires
                 when the generator is first advanced.
-            request_timeout: Optional per-call request timeout in seconds.
+            request_timeout: Optional per-call request timeout in
+                seconds. Validated like ``GreyCloudConfig.request_timeout``:
+                an int (never a bool) >= 1, rejected with TypeError/ValueError
+                before any API or grounding work.
             **kwargs: Additional parameters for GenerateContentConfig
 
         Yields:
             Union[str, Dict[str, str], types.GenerateContentResponse]: Chunks of response text, event dicts, or raw response objects
         """
         model_name = model or self.config.model
-        # Generator: validate the config before grounding so config errors
-        # raise when the generator is created (also before any billed search);
-        # the grounding search + injection still run when the generator is
-        # first advanced, before the first yield.
+        # Validate the config BEFORE grounding (a config error must never
+        # fire a billed Discovery Engine search). As a generator body, this
+        # runs on the caller's first next(), before the first yield; the
+        # grounding search + injection run immediately after it, in the same
+        # first iteration.
         config = self._build_generate_config(
             model=model_name,
             system_instruction=system_instruction,
@@ -1137,12 +1147,20 @@ class GreyCloudClient:
             streaming: If True, use streaming generation
             return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings (only when streaming=True)
             return_events: If True, yield events dictionary including thoughts (only when streaming=True)
-            on_thought: Optional callback for thoughts (only when streaming=True)
-            request_timeout: Per-request timeout in seconds
+            on_thought: Optional callback invoked with thought text as thinking
+                tokens arrive (only when streaming=True; also fires in
+                return_chunks mode)
+            request_timeout: Per-request timeout in seconds. Same validation
+                rules as the config: int (never bool), >= 1; bad values are
+                rejected on the call, before any retry backoff or search.
             **generate_kwargs: Additional arguments for generate_content or generate_content_stream
 
         Returns:
-            GenerateContentResponse (if streaming=False) or Generator[Union[str, Dict[str, str], types.GenerateContentResponse], None, None] (if streaming=True)
+            GenerateContentResponse (if streaming=False) or Generator[Union[str, Dict[str, str], types.GenerateContentResponse], None, None] (if streaming=True). Invalid generation configs raise ``ValueError``/``TypeError`` on the call itself — not on the first iteration of the streaming generator.
+
+        Raises:
+            ValueError: For generation parameters the retry loop cannot fix
+                (e.g. Gemini 4 rejecting ``thinking_level='MINIMAL'``).
         """
         # Surface deterministic config errors on the call itself, before the
         # streaming branch returns a generator: a generator body runs on the

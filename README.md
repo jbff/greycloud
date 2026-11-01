@@ -59,7 +59,10 @@ Using `google-genai` directly is flexible but verbose. GreyCloud focuses on **de
     - Auth choices (API key vs OAuth + SA impersonation)
     - Generation parameters (temperature, top_p, max_output_tokens, seed)
     - Safety settings
-    - Thinking configuration
+    - Thinking configuration (`thinking_level`; `include_thoughts` is
+      tri-state — unset sends no field on non-Gemini-4 models)
+    - Per-request HTTP settings (`request_timeout`, `int >= 1`; new 0.5.0
+      fields are keyword-only so pre-0.5 positional construction still maps)
     - Vertex AI Search datastore + grounding mode (`"inject"` | `"tool"`)
     - Grounding skip threshold (`min_grounding_query_chars`)
     - Batch/GCS bucket settings
@@ -537,18 +540,35 @@ Note: `create_client` never spawns an interactive `gcloud auth application-defau
   `thinking_level` (`LOW`/`MEDIUM`/`HIGH`, default `MEDIUM`) replaces
   `thinking_budget`, and explicit `cached_content` / `GreyCloudCache` usage is
   rejected with a clear error — Gemini 4 relies on automatic implicit caching.
-  The same rules apply to batch JSONL generation.
+  The same rules apply to batch JSONL generation, in both the dict- and
+  object-config branches of `upload_batch_requests_to_gcs`; direct batch
+  uploads fall back to `config.model` when no per-request or job-level model
+  is given.
 - **Streaming options**: `return_events` yields structured `{"text": ...}` /
   `{"thought": ...}` events; `on_thought` delivers thinking tokens as they
-  arrive and accepts sync or async callbacks; `request_timeout` is honored per
-  call and merges into an `http_options` object you pass yourself.
+  arrive, accepts sync or async callbacks, and keeps firing when
+  `return_chunks=True` (thought text is delivered before the raw chunk is
+  yielded). `request_timeout` is honored per call, merges into an
+  `http_options` object you pass yourself (a plain dict works too), and is
+  validated on the call like the config — an int (never a bool) >= 1.
+- **`include_thoughts` is tri-state** (`Optional[bool]`, default `None`):
+  unset, no `includeThoughts` field is sent on non-Gemini-4 models — the
+  0.4.x behavior. Gemini 4 resolves an unset value to `True`; an explicit
+  `True`/`False` — in the config or per-call `thinking_config` — is honored
+  everywhere.
 - **Reasoning-token accounting**: the async rate limiter reconciles estimated
-  prompt tokens against the response's `usage_metadata`.
+  prompt tokens against the response's `usage_metadata` (the sum includes
+  tool-use prompt tokens) and measures the delta against the clamped TPM
+  charge.
 - **Auth**: `create_client` now sends `v1beta1` and the configured timeout in
   `HttpOptions`.
 - **Retry correctness**: a retried stream no longer replays text or thoughts
-  already delivered, and invalid generation config fails before the first
-  request instead of after retry backoff.
+  already delivered (including when a thought callback fails), a raising
+  callback cannot suppress a retry, and invalid generation config fails on
+  the call itself — before the first request, any retry backoff, or a billed
+  grounding search — for every entry point, streaming and not, sync and
+  async. Passing both `thinking_config` and `thinkingConfig` raises a clear
+  "not both" error instead of a generic validation failure.
 
 ---
 

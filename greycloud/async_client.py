@@ -755,7 +755,10 @@ class GreyCloudAsyncClient:
                 not invoked when grounding is skipped entirely. Coroutine
                 callbacks are awaited; callback exceptions are logged at
                 WARNING and never propagate.
-            request_timeout: Optional per-call request timeout in seconds.
+            request_timeout: Optional per-call request timeout in
+                seconds. Validated like ``GreyCloudConfig.request_timeout``:
+                an int (never a bool) >= 1, rejected with TypeError/ValueError
+                before any API or grounding work.
         """
         model_name = model or self.config.model
         # Build and validate the config BEFORE any grounding search: a config
@@ -824,7 +827,11 @@ class GreyCloudAsyncClient:
         Args:
             return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings
             return_events: If True, yield structured dict events (``{"thought": ...}`` or ``{"text": ...}``)
-            on_thought: Optional sync or async callback invoked with thought text as thinking tokens arrive
+            on_thought: Optional sync or async callback invoked with
+                thought text as thinking tokens arrive. Also fires when
+                ``return_chunks`` is True: thought text is delivered before
+                the raw chunk is yielded, so raw mode does not starve the
+                callback.
             retry_unquoted: Passed through to the grounding search; see
                 :func:`greycloud.grounding.asearch_sources`.
             grounding_query: Optional explicit Discovery Engine query used in
@@ -840,13 +847,17 @@ class GreyCloudAsyncClient:
                 callbacks are awaited; callback exceptions are logged at
                 WARNING and never propagate. Fires when the async generator is
                 first advanced.
-            request_timeout: Optional per-call request timeout in seconds.
+            request_timeout: Optional per-call request timeout in
+                seconds. Validated like ``GreyCloudConfig.request_timeout``:
+                an int (never a bool) >= 1, rejected with TypeError/ValueError
+                before any API or grounding work.
         """
         model_name = model or self.config.model
-        # Async generator: validate the config before grounding so config
-        # errors raise when the generator is created (also before any billed
-        # search); the grounding search + injection still run when the
-        # generator is first advanced, before the first yield.
+        # Validate the config BEFORE grounding (a config error must never
+        # fire a billed Discovery Engine search). As an async-generator body,
+        # this runs on the caller's first __anext__, before the first yield;
+        # the grounding search + injection run immediately after it, in the
+        # same first iteration.
         config = self._build_generate_config(
             model=model_name,
             system_instruction=system_instruction,
@@ -999,12 +1010,22 @@ class GreyCloudAsyncClient:
             max_delay: Maximum retry delay in seconds
             return_chunks: If True, yield raw GenerateContentResponse chunk objects instead of strings (only when streaming=True)
             return_events: If True, yield structured dict events ({"thought": ...} or {"text": ...}) (only when streaming=True)
-            on_thought: Optional sync or async callback invoked with thought text as thinking tokens arrive (only when streaming=True)
-            request_timeout: Per-request timeout in seconds
+            on_thought: Optional sync or async callback invoked with thought
+                text as thinking tokens arrive (only when streaming=True;
+                also fires in return_chunks mode)
+            request_timeout: Per-request timeout in seconds. Same validation
+                rules as the config: int (never bool), >= 1; bad values are
+                rejected on the call, before any retry backoff or search.
             **generate_kwargs: Additional arguments for generate_content or generate_content_stream
 
         Returns:
             GenerateContentResponse (if streaming=False) or AsyncGenerator (if streaming=True)
+
+        Raises:
+            ValueError: For generation parameters the retry loop cannot fix
+                (e.g. Gemini 4 rejecting ``thinking_level='MINIMAL'``).
+                Config validation runs on the ``await`` itself — not on the
+                first iteration of the returned async generator.
         """
         # Surface deterministic config errors on the await itself, before the
         # streaming branch returns an async generator: the generator body runs
