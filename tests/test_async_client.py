@@ -2781,3 +2781,50 @@ class TestDictHttpOptionsCoercedAsync:
         )
         assert isinstance(cfg.http_options, types.HttpOptions)
         assert cfg.http_options.timeout == 5000
+
+
+class TestOnThoughtFiresWithReturnChunksAsync:
+    """F11 async twin: return_chunks must not starve on_thought."""
+
+    @pytest.mark.asyncio
+    async def test_callback_receives_thoughts_in_raw_mode(self, async_sample_config):
+        thought_part = MagicMock()
+        thought_part.text = "thinking hard"
+        thought_part.thought = True
+        text_part = MagicMock()
+        text_part.text = "answer"
+        text_part.thought = False
+        chunk1 = MagicMock()
+        chunk1.candidates = [MagicMock()]
+        chunk1.candidates[0].content = MagicMock()
+        chunk1.candidates[0].content.parts = [thought_part]
+        chunk2 = MagicMock()
+        chunk2.candidates = [MagicMock()]
+        chunk2.candidates[0].content = MagicMock()
+        chunk2.candidates[0].content.parts = [text_part]
+
+        async def stream():
+            yield chunk1
+            yield chunk2
+
+        async def make():
+            return stream()
+
+        with patch("greycloud.async_client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.aio.models.generate_content_stream = MagicMock(
+                side_effect=lambda *a, **kw: make()
+            )
+            mock_create.return_value = mock_genai_client
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            captured = []
+            chunks = []
+            async for chunk in client.generate_content_stream(
+                contents, return_chunks=True, on_thought=captured.append
+            ):
+                chunks.append(chunk)
+        assert captured == ["thinking hard"]
+        assert chunks == [chunk1, chunk2]

@@ -2658,3 +2658,47 @@ class TestDictHttpOptionsCoerced:
         )
         assert isinstance(cfg.http_options, types.HttpOptions)
         assert cfg.http_options.timeout == 5000
+
+
+class TestOnThoughtFiresWithReturnChunks:
+    """F11: return_chunks must not starve on_thought — raw mode yields
+    chunks AND still delivers thought text to the callback."""
+
+    def test_callback_receives_thoughts_in_raw_mode(
+        self, sample_config, sample_contents
+    ):
+        thought_part = MagicMock()
+        thought_part.text = "thinking hard"
+        thought_part.thought = True
+        text_part = MagicMock()
+        text_part.text = "answer"
+        text_part.thought = False
+        chunk1 = MagicMock()
+        chunk1.candidates = [MagicMock()]
+        chunk1.candidates[0].content = MagicMock()
+        chunk1.candidates[0].content.parts = [thought_part]
+        chunk2 = MagicMock()
+        chunk2.candidates = [MagicMock()]
+        chunk2.candidates[0].content = MagicMock()
+        chunk2.candidates[0].content.parts = [text_part]
+
+        def stream():
+            yield chunk1
+            yield chunk2
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.side_effect = (
+                lambda *a, **kw: stream()
+            )
+            mock_create.return_value = mock_genai_client
+            client = GreyCloudClient(sample_config)
+
+            captured = []
+            chunks = list(
+                client.generate_content_stream(
+                    sample_contents, return_chunks=True, on_thought=captured.append
+                )
+            )
+        assert captured == ["thinking hard"]
+        assert chunks == [chunk1, chunk2]

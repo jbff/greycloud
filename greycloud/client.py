@@ -900,6 +900,19 @@ class GreyCloudClient:
             config=config,
         ):
             if return_chunks:
+                # Raw mode still delivers thought text on_thought, so
+                # return_chunks does not starve thought callbacks.
+                if on_thought and (
+                    chunk.candidates
+                    and chunk.candidates[0].content
+                    and chunk.candidates[0].content.parts
+                ):
+                    for part in chunk.candidates[0].content.parts:
+                        if getattr(part, "thought", False) is not True:
+                            continue
+                        raw_text = getattr(part, "text", "") or ""
+                        if isinstance(raw_text, str) and raw_text:
+                            _invoke_thought_callback(on_thought, raw_text)
                 yield chunk
                 continue
 
