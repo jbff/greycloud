@@ -30,11 +30,14 @@ logger = logging.getLogger(__name__)
 def _invoke_thought_callback(on_thought: Callable[[str], Any], text: str) -> None:
     """Invoke a sync ``on_thought`` callback, never raising.
 
-    A coroutine-function callback is driven to completion with ``asyncio.run``
-    when no loop is running in this thread. Inside a running loop the
-    coroutine is scheduled on that loop with a done-callback that logs
-    failures: calling it and discarding the coroutine would both drop the
-    thought and emit a "coroutine was never awaited" warning.
+    A coroutine-function callback without a running loop is driven to
+    completion inline on a private event loop — deliberately NOT
+    ``asyncio.run``, whose teardown clears the thread's installed loop and
+    would break a caller that manages its own loop. Inside a running loop
+    the coroutine is fire-and-forget: scheduled on that loop with a
+    done-callback that logs failures (awaiting it would block generation);
+    calling it and discarding the coroutine would both drop the thought and
+    emit a "coroutine was never awaited" warning.
     """
     try:
         result = on_thought(text)
@@ -42,8 +45,13 @@ def _invoke_thought_callback(on_thought: Callable[[str], Any], text: str) -> Non
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
-                # No loop in this thread: drive to completion inline.
-                asyncio.run(result)
+                # No loop in this thread: drive to completion inline on a
+                # private loop without touching the thread's current loop.
+                private_loop = asyncio.new_event_loop()
+                try:
+                    private_loop.run_until_complete(result)
+                finally:
+                    private_loop.close()
             else:
 
                 def _log_task_failure(task: "asyncio.Task") -> None:

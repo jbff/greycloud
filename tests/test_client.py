@@ -7,7 +7,7 @@ import dataclasses
 import pytest
 from unittest.mock import patch, MagicMock
 from google.genai import types
-from greycloud.client import GreyCloudClient
+from greycloud.client import GreyCloudClient, _invoke_thought_callback
 from greycloud.config import GreyCloudConfig
 from greycloud.grounding import GroundingSource
 
@@ -2725,3 +2725,29 @@ class TestPerCallRequestTimeoutValidation:
             client = GreyCloudClient(sample_config)
         with pytest.raises(exc, match=match):
             client._build_generate_config(model="gemini-3.8-flash", request_timeout=bad)
+
+
+class TestSyncCallbackLoopSurvives:
+    """F15: driving a coroutine callback inline must not clear the
+    thread's installed event loop (asyncio.run resets the current loop
+    policy loop to None when it owns the loop)."""
+
+    def test_inline_coroutine_callback_keeps_thread_loop(self):
+        import asyncio
+
+        installed = asyncio.new_event_loop()
+        asyncio.set_event_loop(installed)
+        try:
+            captured = []
+
+            async def cb(text):
+                captured.append(text)
+
+            _invoke_thought_callback(cb, "thinking hard")
+            assert captured == ["thinking hard"]
+            # The previously installed loop must still be current in this
+            # thread — asyncio.run would have reset it to None.
+            assert asyncio.get_event_loop() is installed
+        finally:
+            asyncio.set_event_loop(None)
+            installed.close()
