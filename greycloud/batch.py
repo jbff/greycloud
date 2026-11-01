@@ -52,6 +52,7 @@ class GreyCloudBatch:
                 endpoint=self.config.endpoint,
                 api_version=self.config.api_version,
                 auto_reauth=self.config.auto_reauth,
+                request_timeout=self.config.request_timeout,
             )
         return self._client
 
@@ -68,6 +69,7 @@ class GreyCloudBatch:
                 endpoint=self.config.endpoint,
                 api_version=self.config.api_version,
                 auto_reauth=self.config.auto_reauth,
+                request_timeout=self.config.request_timeout,
             )
         return self._batch_client
 
@@ -531,6 +533,7 @@ class GreyCloudBatch:
                         endpoint=self.config.endpoint,
                         api_version=self.config.api_version,
                         auto_reauth=self.config.auto_reauth,
+                        request_timeout=self.config.request_timeout,
                     )
                     batch_job_updated = monitor_client.batches.get(name=job_name)
                     break

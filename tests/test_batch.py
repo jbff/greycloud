@@ -711,6 +711,47 @@ class TestGreyCloudBatch:
 
     @pytest.mark.batch
     @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_clients_forward_request_timeout(self, sample_config):
+        """Batch clients must honor the configured request deadline."""
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            batch = GreyCloudBatch(sample_config)
+
+            _ = batch.client
+            assert mock_create.call_args[1]["request_timeout"] == (
+                sample_config.request_timeout
+            )
+
+            _ = batch.batch_client
+            assert mock_create.call_args[1]["request_timeout"] == (
+                sample_config.request_timeout
+            )
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_monitor_batch_job_forwards_request_timeout(
+        self, sample_config, mock_batch_job
+    ):
+        """Monitor polls must honor the configured request deadline."""
+        mock_batch_job.done = True
+        mock_batch_job.error = None
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_client = MagicMock()
+            mock_client.batches.get.return_value = mock_batch_job
+            mock_create.return_value = mock_client
+
+            with patch("greycloud.batch.storage"):
+                batch = GreyCloudBatch(sample_config)
+                with patch("time.sleep"):
+                    batch.monitor_batch_job(batch_job=mock_batch_job)
+
+            assert mock_create.call_args[1]["request_timeout"] == (
+                sample_config.request_timeout
+            )
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
     def test_create_batch_job(self, sample_config):
         """Test batch job creation"""
         batch_requests = [

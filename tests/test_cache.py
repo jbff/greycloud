@@ -82,6 +82,9 @@ class TestGreyCloudCacheClient:
             client = cache_client.client
             assert client == mock_genai_client
             mock_create.assert_called_once()
+            assert mock_create.call_args[1]["request_timeout"] == (
+                sample_config.request_timeout
+            )
 
     def test_client_cached(self, sample_config, mock_genai_client):
         """Client is cached after first access"""

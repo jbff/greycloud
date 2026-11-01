@@ -96,6 +96,7 @@ class GreyCloudCache:
                 endpoint=self.config.endpoint,
                 api_version=self.config.api_version,
                 auto_reauth=self.config.auto_reauth,
+                request_timeout=self.config.request_timeout,
             )
         return self._client
 
