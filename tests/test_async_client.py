@@ -2896,3 +2896,28 @@ class TestToolUseTokensInFallbackSum:
             "thoughts_token_count": 5,
         }
         assert client._extract_total_tokens(usage) == 35
+
+
+class TestDuelingThinkingConfigSpellingsAsync:
+    """F17 async twin: both thinking_config spellings raise a named
+    ValueError."""
+
+    def test_g4_both_spellings_raise_named_value_error(self, async_sample_config):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        with pytest.raises(ValueError, match="thinking_config") as excinfo:
+            client._build_generate_config(
+                model="gemini-4-argon",
+                thinking_config={"thinkingLevel": "LOW"},
+                thinkingConfig={"thinkingLevel": "HIGH"},
+            )
+        assert "thinkingConfig" in str(excinfo.value)
+        assert "extra" not in str(excinfo.value).lower()
+
+    def test_g4_single_camel_spelling_still_works(self, async_sample_config):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        cfg = client._build_generate_config(
+            model="gemini-4-argon", thinkingConfig={"thinkingLevel": "LOW"}
+        )
+        assert cfg.thinking_config.thinking_level.value == "LOW"

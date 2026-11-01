@@ -465,9 +465,17 @@ class GreyCloudAsyncClient:
 
             # Check and pop thinking_config / thinkingConfig in kwargs
             # Always pop so config_dict.update(kwargs) can never overwrite the sanitized thinking_config!
-            tc = kwargs.pop("thinking_config", None)
-            if tc is None:
-                tc = kwargs.pop("thinkingConfig", None)
+            tc_snake = kwargs.pop("thinking_config", None)
+            tc_camel = kwargs.pop("thinkingConfig", None)
+            if tc_snake is not None and tc_camel is not None:
+                # Pop both unconditionally, then name the conflict: letting
+                # the second spelling through yields pydantic's opaque
+                # extra_forbidden error instead.
+                raise ValueError(
+                    "Pass either thinking_config or thinkingConfig, not both: "
+                    "they are two spellings of the same option."
+                )
+            tc = tc_snake if tc_snake is not None else tc_camel
 
             tc_thinking_level = None
             if tc is not None:

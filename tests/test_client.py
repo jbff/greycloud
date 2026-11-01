@@ -2751,3 +2751,37 @@ class TestSyncCallbackLoopSurvives:
         finally:
             asyncio.set_event_loop(None)
             installed.close()
+
+
+class TestDuelingThinkingConfigSpellings:
+    """F17: passing both thinking_config spellings must raise a named
+    ValueError — not pydantic's extra_forbidden from the leftover camelCase
+    key reaching GenerateContentConfig."""
+
+    def test_g4_both_spellings_raise_named_value_error(self, sample_config):
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        with pytest.raises(ValueError, match="thinking_config") as excinfo:
+            client._build_generate_config(
+                model="gemini-4-argon",
+                thinking_config={"thinkingLevel": "LOW"},
+                thinkingConfig={"thinkingLevel": "HIGH"},
+            )
+        assert "thinkingConfig" in str(excinfo.value)
+        assert "extra" not in str(excinfo.value).lower()
+
+    def test_g4_single_snake_spelling_still_works(self, sample_config):
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        cfg = client._build_generate_config(
+            model="gemini-4-argon", thinking_config={"thinkingLevel": "LOW"}
+        )
+        assert cfg.thinking_config.thinking_level.value == "LOW"
+
+    def test_g4_single_camel_spelling_still_works(self, sample_config):
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        cfg = client._build_generate_config(
+            model="gemini-4-argon", thinkingConfig={"thinkingLevel": "LOW"}
+        )
+        assert cfg.thinking_config.thinking_level.value == "LOW"
