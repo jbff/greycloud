@@ -418,10 +418,11 @@ class GreyCloudAsyncClient:
             final_http_options = kwargs.pop("http_options")
 
         if gemini_4:
-            # Check thinking budget in kwargs
-            if "thinking_budget" in kwargs or "thinkingBudget" in kwargs:
-                kwargs.pop("thinking_budget", None)
-                kwargs.pop("thinkingBudget", None)
+            # Check thinking budget in kwargs. None means "unset", so only a
+            # real value is rejected.
+            flat_budget = kwargs.pop("thinking_budget", None)
+            flat_budget_camel = kwargs.pop("thinkingBudget", None)
+            if flat_budget is not None or flat_budget_camel is not None:
                 raise ValueError(
                     "Gemini 4 does not support thinking_budget; use thinking_level instead."
                 )
@@ -439,7 +440,10 @@ class GreyCloudAsyncClient:
                         "Gemini 4 does not support thinking_budget; use thinking_level instead."
                     )
                 if isinstance(tc, dict):
-                    if "thinking_budget" in tc or "thinkingBudget" in tc:
+                    if (
+                        tc.get("thinking_budget") is not None
+                        or tc.get("thinkingBudget") is not None
+                    ):
                         raise ValueError(
                             "Gemini 4 does not support thinking_budget; use thinking_level instead."
                         )

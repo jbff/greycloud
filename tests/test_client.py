@@ -572,6 +572,28 @@ class TestGreyCloudClient:
                     model="gemini-4-argon", thinking_budget=1024
                 )
 
+    def test_build_generate_config_gemini_4_accepts_none_thinking_budget(
+        self, sample_config
+    ):
+        """thinking_budget=None means unset and must not be rejected."""
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            client = GreyCloudClient(sample_config)
+
+            cfg = client._build_generate_config(
+                model="gemini-4-argon",
+                thinking_budget=None,
+                thinkingBudget=None,
+            )
+            assert cfg.thinking_config.thinking_level == "MEDIUM"
+
+            # Nested dict form with an explicit None is unset too.
+            cfg2 = client._build_generate_config(
+                model="gemini-4-argon",
+                thinking_config={"thinkingBudget": None, "thinkingLevel": "LOW"},
+            )
+            assert cfg2.thinking_config.thinking_level == "LOW"
+
     def test_build_generate_config_gemini_4_rejects_minimal_thinking_level(
         self, sample_config
     ):

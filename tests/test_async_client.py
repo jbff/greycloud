@@ -221,6 +221,26 @@ class TestGreyCloudAsyncClientConfigBuilding:
                     model="gemini-4-argon", thinking_budget=1024
                 )
 
+    def test_build_generate_config_gemini_4_accepts_none_thinking_budget(
+        self, async_sample_config
+    ):
+        """thinking_budget=None means unset and must not be rejected."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+
+            cfg = client._build_generate_config(
+                model="gemini-4-argon",
+                thinking_budget=None,
+                thinkingBudget=None,
+            )
+            assert cfg.thinking_config.thinking_level == "MEDIUM"
+
+            cfg2 = client._build_generate_config(
+                model="gemini-4-argon",
+                thinking_config={"thinkingBudget": None, "thinkingLevel": "LOW"},
+            )
+            assert cfg2.thinking_config.thinking_level == "LOW"
+
     def test_build_generate_config_gemini_4_rejects_minimal_thinking_level(
         self, async_sample_config
     ):
