@@ -627,7 +627,8 @@ class GreyCloudAsyncClient:
             ]
         if final_thinking_level:
             config_dict["thinking_config"] = types.ThinkingConfig(
-                thinking_level=final_thinking_level
+                thinking_level=final_thinking_level,
+                include_thoughts=self.config.include_thoughts,
             )
         if cached_content:
             config_dict["cached_content"] = cached_content

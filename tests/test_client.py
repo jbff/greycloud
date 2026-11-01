@@ -496,6 +496,33 @@ class TestGreyCloudClient:
             assert config.thinking_config is not None
             assert config.thinking_config.thinking_level == "HIGH"
 
+    def test_build_generate_config_non_gemini_4_includes_thoughts(
+        self, sample_config
+    ):
+        """Non-G4 thinking config carries include_thoughts from config.
+
+        Without it Vertex returns no thought parts, so on_thought and
+        return_events never fire on the default gemini-3.8-flash model.
+        """
+        from greycloud.config import GreyCloudConfig
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            client = GreyCloudClient(sample_config)
+            config = client._build_generate_config(
+                model="gemini-3.8-flash", thinking_level="HIGH"
+            )
+            assert config.thinking_config.include_thoughts is True
+
+            quiet_config = GreyCloudConfig(
+                project_id="test-proj", include_thoughts=False
+            )
+            client_quiet = GreyCloudClient(quiet_config)
+            config_quiet = client_quiet._build_generate_config(
+                model="gemini-3.8-flash", thinking_level="HIGH"
+            )
+            assert config_quiet.thinking_config.include_thoughts is False
+
     def test_build_generate_config_gemini_4_strips_penalties_and_sampling(
         self, sample_config
     ):

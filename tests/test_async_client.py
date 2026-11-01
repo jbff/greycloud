@@ -146,6 +146,28 @@ class TestGreyCloudAsyncClientConfigBuilding:
             assert len(config.safety_settings) == 1
             assert config.safety_settings[0].category == "HARM_CATEGORY_HATE_SPEECH"
 
+    def test_build_generate_config_non_gemini_4_includes_thoughts(
+        self, async_sample_config
+    ):
+        """Non-G4 thinking config carries include_thoughts from config."""
+        from greycloud.config import GreyCloudConfig
+
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            config = client._build_generate_config(
+                model="gemini-3.8-flash", thinking_level="HIGH"
+            )
+            assert config.thinking_config.include_thoughts is True
+
+            quiet_config = GreyCloudConfig(
+                project_id="test-proj", include_thoughts=False
+            )
+            client_quiet = GreyCloudAsyncClient(quiet_config)
+            config_quiet = client_quiet._build_generate_config(
+                model="gemini-3.8-flash", thinking_level="HIGH"
+            )
+            assert config_quiet.thinking_config.include_thoughts is False
+
     def test_build_generate_config_gemini_4_strips_penalties_and_sampling(
         self, async_sample_config
     ):

@@ -627,7 +627,8 @@ class GreyCloudClient:
         # Add thinking config if configured
         if final_thinking_level:
             config_dict["thinking_config"] = types.ThinkingConfig(
-                thinking_level=final_thinking_level
+                thinking_level=final_thinking_level,
+                include_thoughts=self.config.include_thoughts,
             )
 
         # Add cached content reference if provided
