@@ -534,7 +534,7 @@ All usage and configuration details are documented in this `README.md`. For addi
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - Google Cloud Project with Vertex AI enabled
 - `google-genai` package (installed with `greycloud`)
 - `google-auth` package (installed with `greycloud`, for OAuth)
