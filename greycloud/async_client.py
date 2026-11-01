@@ -645,6 +645,25 @@ class GreyCloudAsyncClient:
         config_dict.update(kwargs)
         return types.GenerateContentConfig(**config_dict)
 
+    def _validate_generate_config(
+        self,
+        request_timeout: Optional[int],
+        generate_kwargs: Dict[str, Any],
+    ) -> None:
+        """Raise deterministic config errors before any API/grounding work.
+
+        ``generate_with_retry`` accepts the grounding options alongside the
+        generation options; drop those before building the config so only
+        real generation parameters are validated.
+        """
+        config_kwargs = {
+            key: value
+            for key, value in generate_kwargs.items()
+            if key
+            not in ("retry_unquoted", "grounding_query", "grounding", "on_grounding")
+        }
+        self._build_generate_config(request_timeout=request_timeout, **config_kwargs)
+
     async def generate_content(
         self,
         contents: List[types.Content],
@@ -923,6 +942,12 @@ class GreyCloudAsyncClient:
         # entry point inherits grounding injection consistently. The Discovery
         # Engine search simply re-runs on a retry attempt, which is acceptable
         # (retries are rare and a search is cheap).
+        # Surface deterministic config errors before grounding runs or any
+        # retry/backoff: _build_generate_config raises ValueError/TypeError
+        # for parameters no retry can fix, and with grounding enabled each
+        # attempt would otherwise run a billed search first.
+        self._validate_generate_config(request_timeout, generate_kwargs)
+
         for attempt in range(max_retries + 1):
             try:
                 return await self.generate_content(
@@ -1006,6 +1031,9 @@ class GreyCloudAsyncClient:
         Union[str, Dict[str, str], types.GenerateContentResponse], None
     ]:
         """Async generator that yields stream chunks with retry on failure."""
+        # Fail fast on deterministic config errors (before the first attempt
+        # runs grounding or sleeps).
+        self._validate_generate_config(request_timeout, generate_kwargs)
         has_yielded = False
         for attempt in range(max_retries + 1):
             try:

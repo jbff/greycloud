@@ -898,6 +898,53 @@ class TestGreyCloudClient:
 
             assert response == mock_generate_response
 
+    def test_generate_with_retry_fails_fast_on_invalid_config(
+        self, sample_config, sample_contents
+    ):
+        """Deterministic config errors must not be retried or run a search."""
+        sample_config.use_vertex_ai_search = True
+        sample_config.vertex_ai_search_datastore = "test-datastore"
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            client = GreyCloudClient(sample_config)
+
+            with patch("greycloud.client.search_sources") as mock_search, patch(
+                "greycloud.client.time.sleep"
+            ) as mock_sleep:
+                with pytest.raises(ValueError, match="MINIMAL"):
+                    client.generate_with_retry(
+                        sample_contents,
+                        model="gemini-4-argon",
+                        thinking_level="MINIMAL",
+                    )
+                mock_search.assert_not_called()
+                mock_sleep.assert_not_called()
+            mock_create.return_value.models.generate_content.assert_not_called()
+
+    def test_generate_with_retry_streaming_fails_fast_on_invalid_config(
+        self, sample_config, sample_contents
+    ):
+        """The streaming retry wrapper validates before any search or sleep."""
+        sample_config.use_vertex_ai_search = True
+        sample_config.vertex_ai_search_datastore = "test-datastore"
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            client = GreyCloudClient(sample_config)
+
+            stream = client.generate_with_retry(
+                sample_contents,
+                streaming=True,
+                model="gemini-4-argon",
+                thinking_level="MINIMAL",
+            )
+            with patch("greycloud.client.search_sources") as mock_search, patch(
+                "greycloud.client.time.sleep"
+            ) as mock_sleep:
+                with pytest.raises(ValueError, match="MINIMAL"):
+                    next(stream)
+                mock_search.assert_not_called()
+                mock_sleep.assert_not_called()
+
     def test_generate_with_retry_after_failure(
         self, sample_config, sample_contents, mock_generate_response
     ):

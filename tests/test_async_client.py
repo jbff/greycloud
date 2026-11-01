@@ -1070,6 +1070,63 @@ class TestGreyCloudAsyncClientRetry:
             assert mock_async_genai_client.aio.models.generate_content.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_generate_with_retry_fails_fast_on_invalid_config(
+        self, async_sample_config
+    ):
+        """Deterministic config errors must not be retried or run a search."""
+        async_sample_config.use_vertex_ai_search = True
+        async_sample_config.vertex_ai_search_datastore = "test-datastore"
+
+        with patch("greycloud.async_client.create_client", return_value=MagicMock()):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            with patch(
+                "greycloud.async_client.asearch_sources", new_callable=AsyncMock
+            ) as mock_search, patch(
+                "greycloud.async_client.asyncio.sleep", new_callable=AsyncMock
+            ) as mock_sleep:
+                with pytest.raises(ValueError, match="MINIMAL"):
+                    await client.generate_with_retry(
+                        contents,
+                        model="gemini-4-argon",
+                        thinking_level="MINIMAL",
+                    )
+                mock_search.assert_not_awaited()
+                mock_sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_generate_with_retry_streaming_fails_fast_on_invalid_config(
+        self, async_sample_config
+    ):
+        """The streaming retry wrapper validates before any search or sleep."""
+        async_sample_config.use_vertex_ai_search = True
+        async_sample_config.vertex_ai_search_datastore = "test-datastore"
+
+        with patch("greycloud.async_client.create_client", return_value=MagicMock()):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            stream = await client.generate_with_retry(
+                contents,
+                streaming=True,
+                model="gemini-4-argon",
+                thinking_level="MINIMAL",
+            )
+            with patch(
+                "greycloud.async_client.asearch_sources", new_callable=AsyncMock
+            ) as mock_search, patch(
+                "greycloud.async_client.asyncio.sleep", new_callable=AsyncMock
+            ) as mock_sleep:
+                with pytest.raises(ValueError, match="MINIMAL"):
+                    async for _ in stream:
+                        pass
+                mock_search.assert_not_awaited()
+                mock_sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_retry_exhausted_raises(
         self, async_sample_config, mock_async_genai_client
     ):
