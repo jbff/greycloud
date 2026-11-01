@@ -149,7 +149,8 @@ class TestGreyCloudAsyncClientConfigBuilding:
     def test_build_generate_config_non_gemini_4_includes_thoughts(
         self, async_sample_config
     ):
-        """Non-G4 thinking config carries include_thoughts from config."""
+        """Non-G4 thinking config omits include_thoughts by default (0.4.x
+        behavior); explicit config opt-in/opt-out is honored."""
         from greycloud.config import GreyCloudConfig
 
         with patch("greycloud.async_client.create_client"):
@@ -157,7 +158,16 @@ class TestGreyCloudAsyncClientConfigBuilding:
             config = client._build_generate_config(
                 model="gemini-3.8-flash", thinking_level="HIGH"
             )
-            assert config.thinking_config.include_thoughts is True
+            assert config.thinking_config.include_thoughts is None
+
+            optin_config = GreyCloudConfig(
+                project_id="test-proj", include_thoughts=True
+            )
+            client_optin = GreyCloudAsyncClient(optin_config)
+            config_optin = client_optin._build_generate_config(
+                model="gemini-3.8-flash", thinking_level="HIGH"
+            )
+            assert config_optin.thinking_config.include_thoughts is True
 
             quiet_config = GreyCloudConfig(
                 project_id="test-proj", include_thoughts=False
@@ -2592,3 +2602,52 @@ class TestCallerIncludeThoughtsOnGemini4Async:
             model="gemini-3.8-flash", thinking_config=cfg
         )
         assert built.thinking_config.include_thoughts is False
+
+
+class TestNonG4IncludeThoughtsOmittedAsync:
+    """F6: 0.4.x apps using thinking_level on gemini-3.8-flash must not
+    suddenly receive thought parts. The non-G4 ThinkingConfig omits
+    include_thoughts unless the caller or config explicitly opts in;
+    the G4 new default (True) is asserted for contrast."""
+
+    def test_non_g4_omits_include_thoughts_when_silent(self, async_sample_config):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        built = client._build_generate_config(
+            model="gemini-3.8-flash", thinking_level="HIGH"
+        )
+        assert built.thinking_config.thinking_level.value == "HIGH"
+        assert built.thinking_config.include_thoughts is None
+
+    def test_non_g4_explicit_config_false_honored(self, async_sample_config):
+        async_sample_config.include_thoughts = False
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        built = client._build_generate_config(
+            model="gemini-3.8-flash", thinking_level="HIGH"
+        )
+        assert built.thinking_config.include_thoughts is False
+
+    def test_non_g4_explicit_config_true_honored(self, async_sample_config):
+        async_sample_config.include_thoughts = True
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        built = client._build_generate_config(
+            model="gemini-3.8-flash", thinking_level="HIGH"
+        )
+        assert built.thinking_config.include_thoughts is True
+
+    def test_g4_none_config_default_sends_true(self, async_sample_config):
+        async_sample_config.include_thoughts = None
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        built = client._build_generate_config(
+            model="gemini-4-argon", thinking_level="HIGH"
+        )
+        assert built.thinking_config.include_thoughts is True
+
+    def test_config_bool_validation_still_enforced(self, async_sample_config):
+        from greycloud.config import GreyCloudConfig
+
+        with pytest.raises(TypeError):
+            GreyCloudConfig(include_thoughts="yes")  # type: ignore[arg-type]

@@ -285,7 +285,9 @@ class TestGreyCloudConfig:
         cfg = GreyCloudConfig(project_id="test-proj")
         assert cfg.api_version == "v1beta1"
         assert cfg.request_timeout == 1200
-        assert cfg.include_thoughts is True
+        # Tri-state: None means "unset" — non-G4 omits the field (0.4.x
+        # behavior); G4 builders resolve None to include_thoughts=True.
+        assert cfg.include_thoughts is None
 
     @pytest.mark.parametrize("bad_timeout", [0, -1, -100])
     def test_config_request_timeout_invalid_raises(self, bad_timeout):

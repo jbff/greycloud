@@ -666,16 +666,19 @@ class TestGreyCloudClient:
             assert config.thinking_config.thinking_level == "HIGH"
 
     def test_build_generate_config_non_gemini_4_includes_thoughts(self, sample_config):
-        """Non-G4 thinking config carries include_thoughts from config.
-
-        Without it Vertex returns no thought parts, so on_thought and
-        return_events never fire on the default gemini-3.8-flash model.
-        """
+        """Non-G4 thinking config omits include_thoughts by default (0.4.x
+        behavior): a 0.5.0 app that never set the flag must not suddenly
+        receive thought parts. An explicit config opt-in (True) is honored."""
         from greycloud.config import GreyCloudConfig
 
         with patch("greycloud.client.create_client") as mock_create:
             mock_create.return_value = MagicMock()
             client = GreyCloudClient(sample_config)
+            config = client._build_generate_config(
+                model="gemini-3.8-flash", thinking_level="HIGH"
+            )
+            assert config.thinking_config.include_thoughts is None
+            sample_config.include_thoughts = True
             config = client._build_generate_config(
                 model="gemini-3.8-flash", thinking_level="HIGH"
             )
@@ -2470,3 +2473,52 @@ class TestCallerIncludeThoughtsOnGemini4:
             model="gemini-3.8-flash", thinking_config=cfg
         )
         assert built.thinking_config.include_thoughts is False
+
+
+class TestNonG4IncludeThoughtsOmitted:
+    """F6: 0.4.x apps using thinking_level on gemini-3.8-flash must not
+    suddenly receive thought parts. The non-G4 ThinkingConfig omits
+    include_thoughts unless the caller or config explicitly opts in;
+    the G4 new default (True) is asserted for contrast."""
+
+    def test_non_g4_omits_include_thoughts_when_silent(self, sample_config):
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        built = client._build_generate_config(
+            model="gemini-3.8-flash", thinking_level="HIGH"
+        )
+        assert built.thinking_config.thinking_level.value == "HIGH"
+        # Field omitted: None, not the 0.5.0 leaked default True.
+        assert built.thinking_config.include_thoughts is None
+
+    def test_non_g4_explicit_config_false_honored(self, sample_config):
+        sample_config.include_thoughts = False
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        built = client._build_generate_config(
+            model="gemini-3.8-flash", thinking_level="HIGH"
+        )
+        assert built.thinking_config.include_thoughts is False
+
+    def test_non_g4_explicit_config_true_honored(self, sample_config):
+        sample_config.include_thoughts = True
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        built = client._build_generate_config(
+            model="gemini-3.8-flash", thinking_level="HIGH"
+        )
+        assert built.thinking_config.include_thoughts is True
+
+    def test_g4_none_config_default_sends_true(self, sample_config):
+        """The G4 new default: config None resolves to include_thoughts=True."""
+        sample_config.include_thoughts = None
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        built = client._build_generate_config(
+            model="gemini-4-argon", thinking_level="HIGH"
+        )
+        assert built.thinking_config.include_thoughts is True
+
+    def test_config_bool_validation_still_enforced(self, sample_config):
+        with pytest.raises(TypeError):
+            GreyCloudConfig(include_thoughts="yes")  # type: ignore[arg-type]

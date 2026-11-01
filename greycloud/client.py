@@ -545,7 +545,12 @@ class GreyCloudClient:
             # A caller-supplied include_thoughts (object or dict, camelCase or
             # snake_case) wins; the config default applies only when the caller
             # is silent.
-            caller_include_thoughts = self.config.include_thoughts
+            # G4 new default: a None config default resolves to True.
+            caller_include_thoughts = (
+                True
+                if self.config.include_thoughts is None
+                else self.config.include_thoughts
+            )
             if tc is not None:
                 if isinstance(tc, dict):
                     ci = tc.get("include_thoughts")
@@ -673,12 +678,15 @@ class GreyCloudClient:
                 types.Part.from_text(text=final_system_instruction)
             ]
 
-        # Add thinking config if configured
+        # Add thinking config if configured.
+        # include_thoughts is only sent when the config explicitly opts in:
+        # a None config default restores the pre-0.5 field omission on
+        # non-Gemini-4 models.
         if final_thinking_level:
-            config_dict["thinking_config"] = types.ThinkingConfig(
-                thinking_level=final_thinking_level,
-                include_thoughts=self.config.include_thoughts,
-            )
+            tc_kwargs: Dict[str, Any] = {"thinking_level": final_thinking_level}
+            if self.config.include_thoughts is not None:
+                tc_kwargs["include_thoughts"] = self.config.include_thoughts
+            config_dict["thinking_config"] = types.ThinkingConfig(**tc_kwargs)
 
         # Add cached content reference if provided
         if cached_content:

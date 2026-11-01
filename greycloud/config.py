@@ -114,7 +114,10 @@ class GreyCloudConfig:
     # When None, no thinking config is sent. Set to "LOW", "MEDIUM", or "HIGH"
     # for models that support thinking.
     thinking_level: Optional[str] = None  # None, "LOW", "MEDIUM", "HIGH"
-    include_thoughts: bool = True
+    # None (default) sends no include_thoughts field on non-Gemini-4 models
+    # (0.4.x behavior). Gemini 4 builders resolve None to True (the 0.5.0
+    # G4 default). Explicit True/False is forwarded on every model.
+    include_thoughts: Optional[bool] = None
 
     # Batch processing
     # Buckets must now be configured explicitly when batch/GCS helpers are used.
@@ -181,10 +184,19 @@ class GreyCloudConfig:
             "extractive_content_spec",
             "use_api_key",
             "auto_reauth",
-            "include_thoughts",
         ):
             value = getattr(self, bool_field)
             if not isinstance(value, bool):
                 raise TypeError(
                     f"{bool_field} must be a bool; got {type(value).__name__}"
                 )
+        # include_thoughts is tri-state: None means "unset" (non-G4 sends no
+        # field; G4 resolves to True), True/False must still be a real bool.
+        include_thoughts_value = getattr(self, "include_thoughts")
+        if include_thoughts_value is not None and not isinstance(
+            include_thoughts_value, bool
+        ):
+            raise TypeError(
+                f"include_thoughts must be a bool or None; got "
+                f"{type(include_thoughts_value).__name__}"
+            )
