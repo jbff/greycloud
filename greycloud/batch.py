@@ -323,11 +323,33 @@ class GreyCloudBatch:
                                 level = tc.get("thinkingLevel")
                                 if level is None:
                                     level = tc.get("thinking_level")
-                                if str(level or "").upper() == "MINIMAL":
-                                    raise ValueError(
-                                        "Gemini 4 does not support thinking_level='MINIMAL'; "
-                                        "choose from LOW, MEDIUM, HIGH."
-                                    )
+                                if level is not None:
+                                    # Same validation/normalization as the
+                                    # client builders: enum values resolve via
+                                    # .value, MINIMAL is rejected, and only
+                                    # LOW/MEDIUM/HIGH survive (uppercased).
+                                    if hasattr(level, "value"):
+                                        level = level.value
+                                    level_str = str(level).upper()
+                                    if level_str == "MINIMAL":
+                                        raise ValueError(
+                                            "Gemini 4 does not support "
+                                            "thinking_level='MINIMAL'; choose "
+                                            "from LOW, MEDIUM, HIGH."
+                                        )
+                                    if level_str not in ("LOW", "MEDIUM", "HIGH"):
+                                        raise ValueError(
+                                            f"Invalid thinking_level '{level_str}' "
+                                            "for Gemini 4; choose from LOW, "
+                                            "MEDIUM, HIGH."
+                                        )
+                                    # Normalize the value in place, keeping the
+                                    # caller's key spelling (camelCase or
+                                    # snake_case) intact.
+                                    if tc.get("thinkingLevel") is not None:
+                                        tc["thinkingLevel"] = level_str
+                                    if tc.get("thinking_level") is not None:
+                                        tc["thinking_level"] = level_str
                                 cfg_dict[tc_key] = tc
                     request_inner["generationConfig"] = cfg_dict
                 else:
@@ -379,12 +401,23 @@ class GreyCloudBatch:
                             tl = thinking.thinking_level
                             if hasattr(tl, "value"):
                                 tl = tl.value
-                            if gemini_4 and str(tl).upper() == "MINIMAL":
-                                raise ValueError(
-                                    "Gemini 4 does not support thinking_level='MINIMAL'; "
-                                    "choose from LOW, MEDIUM, HIGH."
-                                )
-                            tc["thinkingLevel"] = str(tl)
+                            if gemini_4:
+                                level_str = str(tl).upper()
+                                if level_str == "MINIMAL":
+                                    raise ValueError(
+                                        "Gemini 4 does not support "
+                                        "thinking_level='MINIMAL'; choose from "
+                                        "LOW, MEDIUM, HIGH."
+                                    )
+                                if level_str not in ("LOW", "MEDIUM", "HIGH"):
+                                    raise ValueError(
+                                        f"Invalid thinking_level '{level_str}' "
+                                        "for Gemini 4; choose from LOW, MEDIUM, "
+                                        "HIGH."
+                                    )
+                                tc["thinkingLevel"] = level_str
+                            else:
+                                tc["thinkingLevel"] = str(tl)
                         if getattr(thinking, "include_thoughts", None) is not None:
                             tc["includeThoughts"] = thinking.include_thoughts
                         if tc:

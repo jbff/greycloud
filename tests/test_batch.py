@@ -962,3 +962,234 @@ class TestGreyCloudBatch:
                 call_args = mock_blob.upload_from_file.call_args
                 # Should detect JSON content type
                 assert call_args is not None
+
+
+# ---------------------------------------------------------------------------
+# Gemini 4 parity: a single logical config must produce the same verdict
+# through every entry path — the sync builder, the async builder, the batch
+# dict branch and the batch object branch. Verdicts: ValueError (reject) or
+# the same sanitized thinkingLevel / seed in the outgoing payload.
+# ---------------------------------------------------------------------------
+
+_G4_MODEL = "gemini-4-argon"
+
+G4_PARITY_CASES = [
+    pytest.param(
+        {
+            "dimension": "thinking_level",
+            "dict_cfg": {"thinkingConfig": {"thinkingLevel": "EXTREME"}},
+            "obj_cfg": dict(
+                thinking_config=types.ThinkingConfig(thinking_level="EXTREME")
+            ),
+            "builder_kwargs": dict(thinking_level="EXTREME"),
+            "expect": ("error", None),
+        },
+        id="extreme-level",
+    ),
+    pytest.param(
+        {
+            "dimension": "thinking_level",
+            "dict_cfg": {"thinkingConfig": {"thinkingLevel": "MINIMAL"}},
+            "obj_cfg": dict(
+                thinking_config=types.ThinkingConfig(thinking_level="MINIMAL")
+            ),
+            "builder_kwargs": dict(thinking_level="MINIMAL"),
+            "expect": ("error", None),
+        },
+        id="minimal-str",
+    ),
+    pytest.param(
+        {
+            "dimension": "thinking_level",
+            "dict_cfg": {
+                "thinkingConfig": {"thinkingLevel": types.ThinkingLevel.MINIMAL}
+            },
+            "obj_cfg": dict(
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=types.ThinkingLevel.MINIMAL
+                )
+            ),
+            "builder_kwargs": dict(
+                thinking_config=dict(thinkingLevel=types.ThinkingLevel.MINIMAL)
+            ),
+            "expect": ("error", None),
+        },
+        id="minimal-enum",
+    ),
+    pytest.param(
+        {
+            "dimension": "thinking_level",
+            "dict_cfg": {"thinkingConfig": {"thinkingLevel": "low"}},
+            "obj_cfg": dict(thinking_config=types.ThinkingConfig(thinking_level="low")),
+            "builder_kwargs": dict(thinking_level="low"),
+            "expect": ("ok", "LOW"),
+        },
+        id="lowercase-low",
+    ),
+    pytest.param(
+        {
+            "dimension": "thinking_level",
+            "dict_cfg": {"cachedContent": "caches/1"},
+            "obj_cfg": dict(cached_content="caches/1"),
+            "builder_kwargs": dict(cached_content="caches/1"),
+            "expect": ("error", None),
+        },
+        id="cached-content",
+    ),
+    pytest.param(
+        {
+            "dimension": "thinking_level",
+            "dict_cfg": {"thinkingConfig": {"thinkingBudget": 512}},
+            "obj_cfg": dict(thinking_config=types.ThinkingConfig(thinking_budget=512)),
+            "builder_kwargs": dict(
+                thinking_config=types.ThinkingConfig(thinking_budget=512)
+            ),
+            "expect": ("error", None),
+        },
+        id="thinking-budget",
+    ),
+    pytest.param(
+        {
+            "dimension": "seed",
+            "dict_cfg": {"seed": 42},
+            "obj_cfg": dict(seed=42),
+            "builder_kwargs": dict(seed=42),
+            "expect": ("ok", 42),
+        },
+        id="seed-passthrough",
+    ),
+]
+
+
+def _make_sync_client(config):
+    from greycloud.client import GreyCloudClient
+
+    with patch("greycloud.client.create_client"):
+        return GreyCloudClient(config)
+
+
+def _make_async_client(config):
+    from greycloud.async_client import GreyCloudAsyncClient
+
+    with patch("greycloud.async_client.create_client"):
+        return GreyCloudAsyncClient(config)
+
+
+def _builder_verdict(client, case):
+    """Verdict of a generate-config builder path."""
+    try:
+        cfg = client._build_generate_config(model=_G4_MODEL, **case["builder_kwargs"])
+    except ValueError as exc:
+        return ("error", None, str(exc))
+    if case["dimension"] == "thinking_level":
+        tc = getattr(cfg, "thinking_config", None)
+        level = getattr(tc, "thinking_level", None)
+        if level is not None and hasattr(level, "value"):
+            level = level.value
+        return ("ok", level, None)
+    return ("ok", getattr(cfg, "seed", None), None)
+
+
+def _make_batch(config):
+    batch = GreyCloudBatch(config)
+    storage_client = MagicMock()
+    bucket = MagicMock()
+    blob = MagicMock()
+    storage_client.bucket.return_value = bucket
+    bucket.blob.return_value = blob
+    batch._storage_client = storage_client
+    return batch, blob
+
+
+def _request(config_obj):
+    return types.InlinedRequest(
+        model=_G4_MODEL,
+        contents=[{"role": "user", "parts": [{"text": "Test"}]}],
+        config=config_obj,
+    )
+
+
+def _dict_branch_request(dict_cfg):
+    """A request whose config stays a dict (the batch dict branch).
+
+    newer google-genai coerces plain dicts into GenerateContentConfig when an
+    InlinedRequest is built, so the dict branch is forced with a mock whose
+    config attribute is the raw dict (same pattern as the sampling-omission
+    tests above).
+    """
+    mock_req = MagicMock()
+    mock_req.model = _G4_MODEL
+    mock_req.contents = [{"role": "user", "parts": [{"text": "Test"}]}]
+    mock_req.config = dict_cfg
+    return mock_req
+
+
+def _batch_verdict(batch, blob, config_obj, force_dict=False):
+    """Verdict of one batch upload branch (dict or object config)."""
+    if force_dict:
+        request = _dict_branch_request(config_obj)
+    else:
+        request = _request(config_obj)
+    try:
+        batch.upload_batch_requests_to_gcs([request], bucket_name="test-bucket")
+    except ValueError as exc:
+        return ("error", None, str(exc))
+    uploaded = blob.upload_from_string.call_args[0][0]
+    req = json.loads(uploaded.strip().split("\n")[0])["request"]
+    gen_cfg = req.get("generationConfig") or {}
+    if "generationConfig" not in req or gen_cfg == {}:
+        return ("ok", None, None)
+    if "seed" in gen_cfg:
+        return ("ok", gen_cfg["seed"], None)
+    tc = gen_cfg.get("thinkingConfig") or {}
+    if tc:
+        return ("ok", tc.get("thinkingLevel"), None)
+    raise AssertionError(f"unexpected generationConfig {gen_cfg}")
+
+
+class TestBatchGemini4Parity:
+    """Parity between the client builders and both batch upload branches."""
+
+    @pytest.mark.batch
+    @pytest.mark.unit
+    @pytest.mark.parametrize("case", G4_PARITY_CASES)
+    def test_same_verdict_through_all_four_paths(self, sample_config, case):
+        sync_client = _make_sync_client(sample_config)
+        async_client = _make_async_client(sample_config)
+        batch = GreyCloudBatch(sample_config)
+
+        verdicts = {
+            "sync_builder": _builder_verdict(sync_client, case),
+            "async_builder": _builder_verdict(async_client, case),
+        }
+        batch, blob = _make_batch(sample_config)
+        verdicts["batch_dict_branch"] = _batch_verdict(
+            batch, blob, case["dict_cfg"], force_dict=True
+        )
+        batch2, blob2 = _make_batch(sample_config)
+        verdicts["batch_object_branch"] = _batch_verdict(
+            batch2, blob2, types.GenerateContentConfig(**case["obj_cfg"])
+        )
+
+        dimension, expect_status, expect_value = (
+            case["dimension"],
+            case["expect"][0],
+            case["expect"][1],
+        )
+        for path, (status, value, msg) in verdicts.items():
+            assert (
+                status,
+                value,
+            ) == case["expect"], (
+                f"{path} verdict {(status, value)} != expected "
+                f'{case["expect"]} (message: {msg})'
+            )
+        if expect_status == "ok" and dimension == "thinking_level":
+            for path, (status, value, _msg) in verdicts.items():
+                assert status == "ok"
+                assert value == expect_value
+        if expect_status == "ok" and dimension == "seed":
+            assert verdicts["sync_builder"][1] == 42
+            assert verdicts["async_builder"][1] == 42
+            assert verdicts["batch_dict_branch"][1] == 42
+            assert verdicts["batch_object_branch"][1] == 42
