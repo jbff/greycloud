@@ -1071,13 +1071,17 @@ class GreyCloudAsyncClient:
 
         async def _tracked_on_thought(text: str) -> None:
             nonlocal thought_emitted
-            thought_emitted = True
+            # Mark only after successful delivery: the stream's callback loop
+            # swallows (and logs) callback errors, so a failing callback must
+            # not flip thought_emitted and thereby suppress a legitimate
+            # retry of the stream. A delivered thought still blocks replay.
             if inspect.iscoroutinefunction(on_thought):
                 await on_thought(text)
             else:
                 res = on_thought(text)
                 if inspect.iscoroutine(res):
                     await res
+            thought_emitted = True
 
         tracked_on_thought = _tracked_on_thought if on_thought is not None else None
         for attempt in range(max_retries + 1):

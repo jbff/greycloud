@@ -1207,8 +1207,14 @@ class GreyCloudClient:
 
         def _tracked_on_thought(text: str) -> Any:
             nonlocal thought_emitted
+            # Mark only after successful delivery: _invoke_thought_callback
+            # swallows (and logs) callback errors, so a failing callback must
+            # not flip thought_emitted and thereby suppress a legitimate
+            # retry of the stream. A delivered thought still blocks replay
+            # (see the has_yielded / thought_emitted guard below).
+            result = on_thought(text)
             thought_emitted = True
-            return on_thought(text)
+            return result
 
         tracked_on_thought = _tracked_on_thought if on_thought is not None else None
         for attempt in range(max_retries + 1):

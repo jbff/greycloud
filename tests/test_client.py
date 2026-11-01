@@ -1,6 +1,7 @@
 """Unit tests for GreyCloudClient"""
 
 import asyncio
+import logging
 import dataclasses
 
 import pytest
@@ -2542,3 +2543,82 @@ class TestValidateBeforeStreamGeneratorReturned:
                 thinking_level="MINIMAL",
                 max_retries=3,
             )
+
+
+class TestFailedOnThoughtDoesNotSuppressRetry:
+    """F8: a raising on_thought callback must not poison thought_emitted.
+
+    Marking the flag before delivery meant a swallowed callback error plus a
+    transient stream failure aborted after one attempt instead of retrying.
+    The flag is set only after successful delivery; the no-replay contract
+    (delivered thought + later failure still re-raises) must be preserved."""
+
+    @staticmethod
+    def _thought_chunk():
+        part = MagicMock()
+        part.text = "thinking hard"
+        part.thought = True
+        chunk = MagicMock()
+        chunk.candidates = [MagicMock()]
+        chunk.candidates[0].content = MagicMock()
+        chunk.candidates[0].content.parts = [part]
+        return chunk
+
+    @staticmethod
+    def _stream_factory(chunk):
+        def stream():
+            yield chunk
+            raise RuntimeError("connection dropped")
+
+        return stream
+
+    def _make_client(self, sample_config):
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.side_effect = (
+                lambda *a, **kw: self._stream_factory(self._thought_chunk())()
+            )
+            mock_create.return_value = mock_genai_client
+            client = GreyCloudClient(sample_config)
+        return client, mock_genai_client.models.generate_content_stream
+
+    def test_raising_callback_retries_until_exhausted(
+        self, sample_config, sample_contents, caplog
+    ):
+        client, mock_stream = self._make_client(sample_config)
+
+        def boom(text):
+            raise RuntimeError("callback exploded")
+
+        with patch("greycloud.client.time.sleep") as mock_sleep:
+            with caplog.at_level(logging.WARNING, logger="greycloud.client"):
+                with pytest.raises(RuntimeError, match="connection dropped"):
+                    list(
+                        client.generate_with_retry(
+                            sample_contents,
+                            streaming=True,
+                            on_thought=boom,
+                            max_retries=3,
+                        )
+                    )
+        assert mock_stream.call_count == 4
+        assert mock_sleep.call_count == 3
+        assert any("callback exploded" in r.getMessage() for r in caplog.records)
+
+    def test_delivered_thought_still_re_raises_without_retry(
+        self, sample_config, sample_contents
+    ):
+        client, mock_stream = self._make_client(sample_config)
+        captured = []
+        with patch("greycloud.client.time.sleep") as mock_sleep:
+            with pytest.raises(RuntimeError, match="connection dropped"):
+                list(
+                    client.generate_with_retry(
+                        sample_contents,
+                        streaming=True,
+                        on_thought=captured.append,
+                    )
+                )
+        assert captured == ["thinking hard"]
+        assert mock_stream.call_count == 1
+        mock_sleep.assert_not_called()

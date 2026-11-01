@@ -1,5 +1,6 @@
 """Tests for GreyCloudAsyncClient"""
 
+import logging
 import os
 
 import pytest
@@ -2671,3 +2672,88 @@ class TestValidateBeforeStreamGeneratorReturnedAsync:
                 thinking_level="MINIMAL",
                 max_retries=3,
             )
+
+
+class TestFailedOnThoughtDoesNotSuppressRetryAsync:
+    """F8 async twin of the failed-on_thought retry suppression fix."""
+
+    @staticmethod
+    def _thought_chunk():
+        part = MagicMock()
+        part.text = "thinking hard"
+        part.thought = True
+        chunk = MagicMock()
+        chunk.candidates = [MagicMock()]
+        chunk.candidates[0].content = MagicMock()
+        chunk.candidates[0].content.parts = [part]
+        return chunk
+
+    @staticmethod
+    def _stream_factory(chunk):
+        async def agen():
+            yield chunk
+            raise RuntimeError("connection dropped")
+
+        async def make():
+            return agen()
+
+        return make
+
+    def _make_client(self, async_sample_config):
+        stream_make = self._stream_factory(self._thought_chunk())
+        with patch("greycloud.async_client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.aio.models.generate_content_stream = MagicMock(
+                side_effect=lambda *a, **kw: stream_make()
+            )
+            mock_create.return_value = mock_genai_client
+            client = GreyCloudAsyncClient(async_sample_config)
+        return client, mock_genai_client.aio.models.generate_content_stream
+
+    @pytest.mark.asyncio
+    async def test_raising_callback_retries_until_exhausted(
+        self, async_sample_config, caplog
+    ):
+        client, mock_stream = self._make_client(async_sample_config)
+        contents = [types.Content(role="user", parts=[types.Part.from_text(text="Hi")])]
+
+        async def boom(text):
+            raise RuntimeError("callback exploded")
+
+        with patch(
+            "greycloud.async_client.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep:
+            with caplog.at_level(logging.WARNING, logger="greycloud.async_client"):
+                with pytest.raises(RuntimeError, match="connection dropped"):
+                    stream = await client.generate_with_retry(
+                        contents, streaming=True, on_thought=boom, max_retries=3
+                    )
+                    async for _ in stream:
+                        pass
+        assert mock_stream.call_count == 4
+        assert mock_sleep.await_count == 3
+        assert any("callback exploded" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_delivered_thought_still_re_raises_without_retry(
+        self, async_sample_config
+    ):
+        client, mock_stream = self._make_client(async_sample_config)
+        contents = [types.Content(role="user", parts=[types.Part.from_text(text="Hi")])]
+        captured = []
+
+        async def on_thought(text):
+            captured.append(text)
+
+        with patch(
+            "greycloud.async_client.asyncio.sleep", new_callable=AsyncMock
+        ) as mock_sleep:
+            with pytest.raises(RuntimeError, match="connection dropped"):
+                stream = await client.generate_with_retry(
+                    contents, streaming=True, on_thought=on_thought
+                )
+                async for _ in stream:
+                    pass
+        assert captured == ["thinking hard"]
+        assert mock_stream.call_count == 1
+        mock_sleep.assert_not_awaited()
