@@ -80,3 +80,24 @@ def test_google_genai_dependency_spec():
     genai_dep = next(d for d in deps if d.startswith("google-genai"))
     assert ">=2.34.0" in genai_dep
     assert "<3.0.0" in genai_dep
+
+
+class TestCILockGate:
+    """F3: the CI test job must gate the uv lock and install it frozen.
+
+    pyproject.toml's google-genai floor is part of the Gemini 4 contract;
+    a CI job that pip-installs from a stale lock would silently resolve
+    below it. The published CI example (TESTING.md) therefore must run
+    `uv lock --check` and install with `uv sync --frozen`.
+    """
+
+    def _ci_example(self):
+        from pathlib import Path
+
+        testing_md = Path(__file__).parent.parent / "TESTING.md"
+        return testing_md.read_text()
+
+    def test_ci_example_gates_the_lock(self):
+        example = self._ci_example()
+        assert "uv lock --check" in example
+        assert "uv sync --frozen" in example

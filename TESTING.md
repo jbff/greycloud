@@ -191,18 +191,28 @@ Tests should be run in CI/CD pipelines. Example GitHub Actions workflow:
 name: Tests
 on: [push, pull_request]
 jobs:
+  lock-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        # Fails when pyproject.toml and uv.lock disagree — the dependency
+        # floor (e.g. google-genai >= 2.34) is part of the Gemini 4 contract.
+      - run: uv lock --check
   test:
+    needs: lock-check
     runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version: ['3.11', '3.12', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev]"
-      - run: pytest --cov=greycloud --cov-report=xml
+      # --frozen installs exactly the resolved lock; CI never re-resolves
+      - run: uv sync --frozen --dev
+      - run: uv run pytest --cov=greycloud --cov-report=xml
       - uses: codecov/codecov-action@v4
 ```
 
