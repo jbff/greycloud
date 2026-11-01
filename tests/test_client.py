@@ -549,6 +549,24 @@ class TestGreyCloudClient:
                     model="gemini-4-argon", cached_content="caches/123"
                 )
 
+    def test_build_generate_config_gemini_4_rejects_camelcase_cached_content(
+        self, sample_config
+    ):
+        """The REST-style cachedContent alias must be rejected too."""
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            client = GreyCloudClient(sample_config)
+            with pytest.raises(ValueError, match="implicit durable caching"):
+                client._build_generate_config(
+                    model="gemini-4-argon", cachedContent="caches/123"
+                )
+
+            # None is unset, not a request.
+            cfg = client._build_generate_config(
+                model="gemini-4-argon", cachedContent=None, cached_content=None
+            )
+            assert cfg.thinking_config.thinking_level == "MEDIUM"
+
     def test_build_generate_config_gemini_3_preserves_sampling(self, sample_config):
         """Non-Gemini 4 models preserve temperature and top_p."""
         with patch("greycloud.client.create_client") as mock_create:

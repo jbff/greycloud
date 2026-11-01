@@ -198,6 +198,22 @@ class TestGreyCloudAsyncClientConfigBuilding:
                     model="gemini-4-argon", cached_content="caches/123"
                 )
 
+    def test_build_generate_config_gemini_4_rejects_camelcase_cached_content(
+        self, async_sample_config
+    ):
+        """The REST-style cachedContent alias must be rejected too."""
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+            with pytest.raises(ValueError, match="implicit durable caching"):
+                client._build_generate_config(
+                    model="gemini-4-argon", cachedContent="caches/123"
+                )
+
+            cfg = client._build_generate_config(
+                model="gemini-4-argon", cachedContent=None, cached_content=None
+            )
+            assert cfg.thinking_config.thinking_level == "MEDIUM"
+
     def test_build_generate_config_gemini_3_preserves_sampling(
         self, async_sample_config
     ):

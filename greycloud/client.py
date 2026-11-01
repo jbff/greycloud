@@ -451,9 +451,12 @@ class GreyCloudClient:
                             "Gemini 4 does not support thinking_level='MINIMAL'; choose from LOW, MEDIUM, HIGH."
                         )
 
-            # Check cached_content
-            effective_cached_content = cached_content or kwargs.pop(
-                "cached_content", None
+            # Check cached_content (snake_case kwarg and REST-style alias).
+            # Pop both unconditionally so neither can leak into config_dict.
+            kw_cached = kwargs.pop("cached_content", None)
+            kw_cached_camel = kwargs.pop("cachedContent", None)
+            effective_cached_content = (
+                cached_content or kw_cached or kw_cached_camel
             )
             if effective_cached_content:
                 raise ValueError(
