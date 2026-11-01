@@ -289,6 +289,13 @@ class GreyCloudBatch:
                 if isinstance(request.config, dict):
                     cfg_dict = dict(request.config)
                     if gemini_4:
+                        for key in ("cachedContent", "cached_content"):
+                            if cfg_dict.pop(key, None):
+                                raise ValueError(
+                                    f"Model {request.model or model} does not support explicit "
+                                    "cached_content. Gemini 4 models rely entirely on automatic "
+                                    "implicit durable caching in Vertex AI."
+                                )
                         cfg_dict.pop("temperature", None)
                         cfg_dict.pop("topP", None)
                         cfg_dict.pop("top_p", None)
@@ -305,11 +312,25 @@ class GreyCloudBatch:
                                 tc = dict(cfg_dict[tc_key])
                                 tc.pop("thinkingBudget", None)
                                 tc.pop("thinking_budget", None)
+                                level = tc.get("thinkingLevel")
+                                if level is None:
+                                    level = tc.get("thinking_level")
+                                if str(level or "").upper() == "MINIMAL":
+                                    raise ValueError(
+                                        "Gemini 4 does not support thinking_level='MINIMAL'; "
+                                        "choose from LOW, MEDIUM, HIGH."
+                                    )
                                 cfg_dict[tc_key] = tc
                     request_inner["generationConfig"] = cfg_dict
                 else:
                     gen_config = {}
                     cfg = request.config
+                    if gemini_4 and getattr(cfg, "cached_content", None):
+                        raise ValueError(
+                            f"Model {request.model or model} does not support explicit "
+                            "cached_content. Gemini 4 models rely entirely on automatic "
+                            "implicit durable caching in Vertex AI."
+                        )
                     if not gemini_4:
                         if getattr(cfg, "temperature", None) is not None:
                             gen_config["temperature"] = cfg.temperature
@@ -342,6 +363,11 @@ class GreyCloudBatch:
                             tl = thinking.thinking_level
                             if hasattr(tl, "value"):
                                 tl = tl.value
+                            if gemini_4 and str(tl).upper() == "MINIMAL":
+                                raise ValueError(
+                                    "Gemini 4 does not support thinking_level='MINIMAL'; "
+                                    "choose from LOW, MEDIUM, HIGH."
+                                )
                             tc["thinkingLevel"] = str(tl)
                         if getattr(thinking, "include_thoughts", None) is not None:
                             tc["includeThoughts"] = thinking.include_thoughts

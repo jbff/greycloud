@@ -603,6 +603,82 @@ class TestGreyCloudBatch:
 
     @pytest.mark.batch
     @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_gemini_4_rejects_cached_content(self, sample_config):
+        """Gemini 4 batch requests reject explicit caching like the client does."""
+        object_request = types.InlinedRequest(
+            model="gemini-4-argon",
+            contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+            config=types.GenerateContentConfig(cached_content="caches/123"),
+        )
+        camel_dict_request = types.InlinedRequest(
+            model="gemini-4-argon",
+            contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+            config={"cachedContent": "caches/123"},
+        )
+        snake_dict_request = types.InlinedRequest(
+            model="gemini-4-argon",
+            contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+            config={"cached_content": "caches/123"},
+        )
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage") as mock_storage:
+                mock_storage_client = MagicMock()
+                mock_storage_client.bucket.return_value = MagicMock()
+                batch = GreyCloudBatch(sample_config)
+
+                for request in (
+                    object_request,
+                    camel_dict_request,
+                    snake_dict_request,
+                ):
+                    with pytest.raises(ValueError, match="implicit durable caching"):
+                        batch.upload_batch_requests_to_gcs(
+                            batch_requests=[request], bucket_name="test-bucket"
+                        )
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_gemini_4_rejects_minimal_thinking_level(self, sample_config):
+        """Gemini 4 batch requests reject MINIMAL thinking like the client does."""
+        object_request = types.InlinedRequest(
+            model="gemini-4-argon",
+            contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_level="MINIMAL")
+            ),
+        )
+        camel_dict_request = types.InlinedRequest(
+            model="gemini-4-argon",
+            contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+            config={"thinkingConfig": {"thinkingLevel": "MINIMAL"}},
+        )
+        snake_dict_request = types.InlinedRequest(
+            model="gemini-4-argon",
+            contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+            config={"thinking_config": {"thinking_level": "MINIMAL"}},
+        )
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage") as mock_storage:
+                mock_storage_client = MagicMock()
+                mock_storage_client.bucket.return_value = MagicMock()
+                batch = GreyCloudBatch(sample_config)
+
+                for request in (
+                    object_request,
+                    camel_dict_request,
+                    snake_dict_request,
+                ):
+                    with pytest.raises(ValueError, match="MINIMAL"):
+                        batch.upload_batch_requests_to_gcs(
+                            batch_requests=[request], bucket_name="test-bucket"
+                        )
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
     def test_batch_jsonl_no_metadata(self, sample_config):
         """Test that InlinedRequest.metadata is NOT forwarded to JSONL"""
         batch_requests = [
