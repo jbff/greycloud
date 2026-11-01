@@ -412,6 +412,10 @@ class GreyCloudAsyncClient:
         if request_timeout is None and "request_timeout" in kwargs:
             request_timeout = kwargs.pop("request_timeout")
         final_http_options = http_options
+        # Coerce REST-style dict options before any merge: dicts have no
+        # model_copy and would crash (or pass raw) below.
+        if final_http_options is not None and isinstance(final_http_options, dict):
+            final_http_options = types.HttpOptions(**final_http_options)
         if request_timeout is not None:
             timeout_ms = request_timeout * 1000
             if final_http_options is not None:
@@ -424,6 +428,8 @@ class GreyCloudAsyncClient:
                 final_http_options = types.HttpOptions(timeout=timeout_ms)
         elif final_http_options is None and "http_options" in kwargs:
             final_http_options = kwargs.pop("http_options")
+            if isinstance(final_http_options, dict):
+                final_http_options = types.HttpOptions(**final_http_options)
 
         if gemini_4:
             # Check thinking budget in kwargs. None means "unset", so only a

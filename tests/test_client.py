@@ -2622,3 +2622,39 @@ class TestFailedOnThoughtDoesNotSuppressRetry:
         assert captured == ["thinking hard"]
         assert mock_stream.call_count == 1
         mock_sleep.assert_not_called()
+
+
+class TestDictHttpOptionsCoerced:
+    """F10: a dict http_options must be coerced to types.HttpOptions before
+    the per-call request_timeout merge (dicts have no model_copy)."""
+
+    def test_dict_plus_timeout_merges(self, sample_config):
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        cfg = client._build_generate_config(
+            model="gemini-3.8-flash",
+            http_options={"timeout": 5000},
+            request_timeout=30,
+        )
+        assert isinstance(cfg.http_options, types.HttpOptions)
+        assert cfg.http_options.timeout == 30000
+
+    def test_dict_headers_survive_merge(self, sample_config):
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        cfg = client._build_generate_config(
+            model="gemini-3.8-flash",
+            http_options={"timeout": 5000, "headers": {"x-test": "1"}},
+            request_timeout=30,
+        )
+        assert cfg.http_options.timeout == 30000
+        assert cfg.http_options.headers == {"x-test": "1"}
+
+    def test_dict_without_timeout_stays_coerced(self, sample_config):
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        cfg = client._build_generate_config(
+            model="gemini-3.8-flash", http_options={"timeout": 5000}
+        )
+        assert isinstance(cfg.http_options, types.HttpOptions)
+        assert cfg.http_options.timeout == 5000

@@ -2757,3 +2757,27 @@ class TestFailedOnThoughtDoesNotSuppressRetryAsync:
         assert captured == ["thinking hard"]
         assert mock_stream.call_count == 1
         mock_sleep.assert_not_awaited()
+
+
+class TestDictHttpOptionsCoercedAsync:
+    """F10 async twin: dict http_options coerced before the timeout merge."""
+
+    def test_dict_plus_timeout_merges(self, async_sample_config):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        cfg = client._build_generate_config(
+            model="gemini-3.8-flash",
+            http_options={"timeout": 5000},
+            request_timeout=30,
+        )
+        assert isinstance(cfg.http_options, types.HttpOptions)
+        assert cfg.http_options.timeout == 30000
+
+    def test_dict_without_timeout_stays_coerced(self, async_sample_config):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        cfg = client._build_generate_config(
+            model="gemini-3.8-flash", http_options={"timeout": 5000}
+        )
+        assert isinstance(cfg.http_options, types.HttpOptions)
+        assert cfg.http_options.timeout == 5000
