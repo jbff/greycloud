@@ -10,6 +10,12 @@ class TestPackageInit:
         """Test package version"""
         assert __version__ == "0.5.0"
 
+    def test_py_typed_marker_is_packaged(self):
+        """PEP 561 marker ships with the package (declared in pyproject)."""
+        from importlib.resources import files
+
+        assert files("greycloud").joinpath("py.typed").is_file()
+
     def test_all_exports(self):
         """Test __all__ exports"""
         expected_exports = [
