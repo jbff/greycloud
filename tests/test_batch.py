@@ -565,6 +565,44 @@ class TestGreyCloudBatch:
 
     @pytest.mark.batch
     @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_gemini_4_uses_job_level_model(self, sample_config):
+        """A job-level model must drive G4 sanitization when request.model is None."""
+        batch_requests = [
+            types.InlinedRequest(
+                contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+                config=types.GenerateContentConfig(
+                    temperature=0.7,
+                    top_p=0.9,
+                    thinking_config=types.ThinkingConfig(thinking_level="HIGH"),
+                ),
+            )
+        ]
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage") as mock_storage:
+                mock_storage_client = MagicMock()
+                mock_bucket = MagicMock()
+                mock_blob = MagicMock()
+                mock_storage.Client.return_value = mock_storage_client
+                mock_storage_client.bucket.return_value = mock_bucket
+                mock_bucket.blob.return_value = mock_blob
+
+                batch = GreyCloudBatch(sample_config)
+                batch.upload_batch_requests_to_gcs(
+                    batch_requests=batch_requests,
+                    bucket_name="test-bucket",
+                    model="gemini-4-argon",
+                )
+
+                uploaded = mock_blob.upload_from_string.call_args[0][0]
+                gen_cfg = json.loads(uploaded)["request"]["generationConfig"]
+                assert "temperature" not in gen_cfg
+                assert "topP" not in gen_cfg
+                assert gen_cfg["thinkingConfig"]["thinkingLevel"] == "HIGH"
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
     def test_batch_jsonl_no_metadata(self, sample_config):
         """Test that InlinedRequest.metadata is NOT forwarded to JSONL"""
         batch_requests = [

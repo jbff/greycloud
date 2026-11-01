@@ -225,6 +225,7 @@ class GreyCloudBatch:
         self,
         batch_requests: List[types.InlinedRequest],
         bucket_name: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> str:
         """
         Upload batch requests to GCS in JSONL format
@@ -232,6 +233,9 @@ class GreyCloudBatch:
         Args:
             batch_requests: List of InlinedRequest objects
             bucket_name: GCS bucket name (defaults to config.batch_gcs_bucket)
+            model: Job-level model name, used for sanitization when a request
+                does not carry its own ``model`` (the usual case for
+                ``create_batch_job``)
 
         Returns:
             str: GCS URI of uploaded JSONL file
@@ -278,7 +282,7 @@ class GreyCloudBatch:
                 "contents": contents_serializable,
             }
 
-            gemini_4 = is_gemini_4(request.model or "")
+            gemini_4 = is_gemini_4(request.model or model or "")
 
             # Serialize generationConfig (camelCase field names, omit None values)
             if request.config:
@@ -414,7 +418,9 @@ class GreyCloudBatch:
         bucket_name = bucket_name or self.config.batch_gcs_bucket
 
         # Upload batch requests to GCS
-        gcs_uri = self.upload_batch_requests_to_gcs(batch_requests, bucket_name)
+        gcs_uri = self.upload_batch_requests_to_gcs(
+            batch_requests, bucket_name, model=model_name
+        )
 
         # Create results destination
         if results_prefix is None:
