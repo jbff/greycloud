@@ -318,3 +318,28 @@ def test_is_gemini_4():
     assert is_gemini_4("") is False
     assert is_gemini_4(None) is False
     assert is_gemini_4(123) is False
+
+
+def test_is_gemini_4_ignores_codename_substrings_in_resource_paths():
+    """Project/endpoint IDs containing 'argon' or 'carbon' are not G4 models.
+
+    Only a path segment that *starts* with the family or codename identifies a
+    Gemini 4 model; a substring inside a project or endpoint id must not.
+    """
+    from greycloud.config import is_gemini_4
+
+    assert (
+        is_gemini_4("projects/acme-carbon/locations/us-central1/endpoints/123")
+        is False
+    )
+    assert is_gemini_4("projects/argon-lab/locations/us-east4/endpoints/456") is False
+    assert is_gemini_4("projects/p/locations/l/endpoints/789") is False
+
+    # Real model segments still match, including tuned endpoints that embed
+    # the model name.
+    assert (
+        is_gemini_4("projects/p/locations/l/publishers/google/models/gemini-4-argon")
+        is True
+    )
+    assert is_gemini_4("argon") is True
+    assert is_gemini_4("models/carbon-preview") is True

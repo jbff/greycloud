@@ -7,14 +7,24 @@ import re
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 
-_GEMINI_4_PATTERN = re.compile(r"(?:gemini-4|argon|carbon)", re.IGNORECASE)
+# Match a model name: the family/codename must start the final path segment
+# and be followed by a separator or the end of the string. An unanchored
+# search over the whole string would classify e.g.
+# "projects/acme-carbon/..." or a tuned endpoint id containing "argon" as
+# Gemini 4 and silently strip parameters that model supports.
+_GEMINI_4_PATTERN = re.compile(
+    r"^(?:gemini-4|argon|carbon)(?:$|[-._])", re.IGNORECASE
+)
 
 
 def is_gemini_4(model: str) -> bool:
     """Return True if model is a Gemini 4 family model."""
     if not model or not isinstance(model, str):
         return False
-    return bool(_GEMINI_4_PATTERN.search(model))
+    # Resource paths may carry the model in their final segment; anything
+    # earlier in the path (project, location, endpoint id) is not the model.
+    name = model.strip().rstrip("/").rsplit("/", 1)[-1]
+    return bool(_GEMINI_4_PATTERN.search(name))
 
 
 def _env_bool(name: str) -> bool:
