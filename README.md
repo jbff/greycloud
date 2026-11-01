@@ -525,12 +525,41 @@ Note: `create_client` never spawns an interactive `gcloud auth application-defau
 
 ---
 
+## Release Notes
+
+### 0.5.0
+
+**Breaking:** Python 3.11+ is now required (previously 3.10), matching
+`google-genai` 2.34+. Stay on `greycloud<0.5` if you need Python 3.10.
+
+- **Gemini 4 support** (`gemini-4-argon`, codename `carbon`): sampling
+  parameters (`temperature`, `top_p`, `top_k`) and penalties are dropped,
+  `thinking_level` (`LOW`/`MEDIUM`/`HIGH`, default `MEDIUM`) replaces
+  `thinking_budget`, and explicit `cached_content` / `GreyCloudCache` usage is
+  rejected with a clear error — Gemini 4 relies on automatic implicit caching.
+  The same rules apply to batch JSONL generation.
+- **Streaming options**: `return_events` yields structured `{"text": ...}` /
+  `{"thought": ...}` events; `on_thought` delivers thinking tokens as they
+  arrive and accepts sync or async callbacks; `request_timeout` is honored per
+  call and merges into an `http_options` object you pass yourself.
+- **Reasoning-token accounting**: the async rate limiter reconciles estimated
+  prompt tokens against the response's `usage_metadata`.
+- **Auth**: `create_client` now sends `v1beta1` and the configured timeout in
+  `HttpOptions`.
+- **Retry correctness**: a retried stream no longer replays text or thoughts
+  already delivered, and invalid generation config fails before the first
+  request instead of after retry backoff.
+
+---
+
 ## Documentation
 
 All usage and configuration details are documented in this `README.md`. For additional examples, see:
 
 - `examples/simple.py` – minimal content-generation script.
 - `examples/caching.py` – context caching for cost-efficient repeated queries.
+- `examples/grounding.py` – Vertex AI Search grounding and the `on_grounding`
+  callback.
 
 ## Requirements
 
