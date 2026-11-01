@@ -312,8 +312,14 @@ class GreyCloudBatch:
                                 cfg_dict[tc_key], dict
                             ):
                                 tc = dict(cfg_dict[tc_key])
-                                tc.pop("thinkingBudget", None)
-                                tc.pop("thinking_budget", None)
+                                if (
+                                    tc.get("thinkingBudget") is not None
+                                    or tc.get("thinking_budget") is not None
+                                ):
+                                    raise ValueError(
+                                        "Gemini 4 does not support thinking_budget; "
+                                        "use thinkingLevel instead."
+                                    )
                                 level = tc.get("thinkingLevel")
                                 if level is None:
                                     level = tc.get("thinking_level")
@@ -355,6 +361,14 @@ class GreyCloudBatch:
                     # thinkingConfig is nested inside generationConfig
                     thinking = getattr(cfg, "thinking_config", None)
                     if thinking is not None:
+                        if (
+                            gemini_4
+                            and getattr(thinking, "thinking_budget", None) is not None
+                        ):
+                            raise ValueError(
+                                "Gemini 4 does not support thinking_budget; "
+                                "use thinkingLevel instead."
+                            )
                         tc = {}
                         if (
                             not gemini_4

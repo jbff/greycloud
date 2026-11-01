@@ -431,12 +431,9 @@ class TestGreyCloudBatch:
 
     @pytest.mark.batch
     @patch("greycloud.batch.GCS_AVAILABLE", True)
-    def test_batch_jsonl_gemini_4_omits_sampling_and_thinking_budget(
-        self, sample_config
-    ):
-        """Test that Gemini 4 batch JSONL omits temperature, topP, topK, thinkingBudget."""
+    def test_batch_jsonl_gemini_4_omits_sampling_parameters(self, sample_config):
+        """Test that Gemini 4 batch JSONL omits temperature, topP, topK."""
         thinking = types.ThinkingConfig(
-            thinking_budget=2048,
             thinking_level="HIGH",
             include_thoughts=True,
         )
@@ -484,7 +481,7 @@ class TestGreyCloudBatch:
     @pytest.mark.batch
     @patch("greycloud.batch.GCS_AVAILABLE", True)
     def test_batch_jsonl_gemini_4_dict_config_omits_sampling(self, sample_config):
-        """Test that actual dict configs for Gemini 4 drop sampling, penalties, and thinkingBudget."""
+        """Test that actual dict configs for Gemini 4 drop sampling and penalties."""
         mock_req = MagicMock()
         mock_req.model = "gemini-4-argon"
         mock_req.contents = [{"role": "user", "parts": [{"text": "Hello"}]}]
@@ -496,7 +493,6 @@ class TestGreyCloudBatch:
             "presencePenalty": 0.5,
             "maxOutputTokens": 500,
             "thinkingConfig": {
-                "thinkingBudget": 1024,
                 "thinkingLevel": "LOW",
             },
         }
@@ -512,7 +508,6 @@ class TestGreyCloudBatch:
             "presence_penalty": 0.5,
             "maxOutputTokens": 600,
             "thinking_config": {
-                "thinking_budget": 1024,
                 "thinking_level": "HIGH",
             },
         }
@@ -623,7 +618,7 @@ class TestGreyCloudBatch:
 
         with patch("greycloud.batch.create_client") as mock_create:
             mock_create.return_value = MagicMock()
-            with patch("greycloud.batch.storage") as mock_storage:
+            with patch("greycloud.batch.storage"):
                 mock_storage_client = MagicMock()
                 mock_storage_client.bucket.return_value = MagicMock()
                 batch = GreyCloudBatch(sample_config)
@@ -634,6 +629,45 @@ class TestGreyCloudBatch:
                     snake_dict_request,
                 ):
                     with pytest.raises(ValueError, match="implicit durable caching"):
+                        batch.upload_batch_requests_to_gcs(
+                            batch_requests=[request], bucket_name="test-bucket"
+                        )
+
+    @pytest.mark.batch
+    @patch("greycloud.batch.GCS_AVAILABLE", True)
+    def test_batch_jsonl_gemini_4_rejects_thinking_budget(self, sample_config):
+        """Gemini 4 batch requests reject thinking_budget like the client does."""
+        object_request = types.InlinedRequest(
+            model="gemini-4-argon",
+            contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=2048)
+            ),
+        )
+        camel_dict_request = types.InlinedRequest(
+            model="gemini-4-argon",
+            contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+            config={"thinkingConfig": {"thinkingBudget": 2048}},
+        )
+        snake_dict_request = types.InlinedRequest(
+            model="gemini-4-argon",
+            contents=[{"role": "user", "parts": [{"text": "Hello"}]}],
+            config={"thinking_config": {"thinking_budget": 2048}},
+        )
+
+        with patch("greycloud.batch.create_client") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch("greycloud.batch.storage"):
+                mock_storage_client = MagicMock()
+                mock_storage_client.bucket.return_value = MagicMock()
+                batch = GreyCloudBatch(sample_config)
+
+                for request in (
+                    object_request,
+                    camel_dict_request,
+                    snake_dict_request,
+                ):
+                    with pytest.raises(ValueError, match="thinking_budget"):
                         batch.upload_batch_requests_to_gcs(
                             batch_requests=[request], bucket_name="test-bucket"
                         )
@@ -662,7 +696,7 @@ class TestGreyCloudBatch:
 
         with patch("greycloud.batch.create_client") as mock_create:
             mock_create.return_value = MagicMock()
-            with patch("greycloud.batch.storage") as mock_storage:
+            with patch("greycloud.batch.storage"):
                 mock_storage_client = MagicMock()
                 mock_storage_client.bucket.return_value = MagicMock()
                 batch = GreyCloudBatch(sample_config)

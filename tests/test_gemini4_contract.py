@@ -314,7 +314,7 @@ class TestGemini4ConfigContract:
                     "frequencyPenalty": 0.3,
                     "presencePenalty": 0.3,
                     "maxOutputTokens": 500,
-                    "thinkingConfig": {"thinkingLevel": "HIGH", "thinkingBudget": 500},
+                    "thinkingConfig": {"thinkingLevel": "HIGH"},
                 },
             ),
             types.InlinedRequest(
