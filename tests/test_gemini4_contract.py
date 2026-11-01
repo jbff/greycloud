@@ -44,6 +44,10 @@ from greycloud.cache import MIN_TOKENS_BY_MODEL
 from greycloud.config import is_gemini_4
 from greycloud.auth import create_client
 
+# The whole module is unit-level: the Gemini 4 request-contract tests build
+# configs against mocks only. Selectable via `pytest -m unit`.
+pytestmark = pytest.mark.unit
+
 # =====================================================================
 # Helpers and Fixtures
 # =====================================================================

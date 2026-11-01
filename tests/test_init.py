@@ -169,3 +169,41 @@ class TestContractSuiteCollected:
         assert "tests collected" in result.stdout
         count = int(result.stdout.split(" tests collected")[0].split()[-1])
         assert count > 0
+
+
+class TestMarkerCoverage:
+    """F18: marker selectors must reach the newer suites.
+
+    The four module-level http-options tests in test_auth.py were written
+    without @pytest.mark.auth, so `pytest -m auth` skipped them; the Gemini 4
+    contract suite carried no marker at all."""
+
+    @staticmethod
+    def _collect(expr):
+        import subprocess
+        import sys
+
+        repo_root = Path(__file__).parent.parent
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "-m", expr, "--co", "-q"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        return result.stdout
+
+    def test_auth_marker_reaches_http_options_tests(self):
+        collected = self._collect("auth")
+        for name in (
+            "test_create_client_http_options_timeout_and_api_version",
+            "test_create_client_http_options_defaults",
+            "test_create_client_http_options_timeout_none",
+            "test_create_client_with_api_key_http_options_timeout",
+        ):
+            assert name in collected, f"{name} not collected under -m auth"
+
+    def test_contract_suite_reachable_by_unit_marker(self):
+        collected = self._collect("unit")
+        # pytest's -v addopts make --co output a tree; assert the module node.
+        assert "test_gemini4_contract.py" in collected

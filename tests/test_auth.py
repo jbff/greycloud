@@ -442,6 +442,7 @@ class TestAutoReauthGate:
                 get_credentials(project_id="test-project", auto_reauth=False)
 
 
+@pytest.mark.auth
 def test_create_client_http_options_timeout_and_api_version(mocker):
     from greycloud.auth import create_client
 
@@ -460,6 +461,7 @@ def test_create_client_http_options_timeout_and_api_version(mocker):
     assert http_opts.timeout == 600000  # 600s in ms
 
 
+@pytest.mark.auth
 def test_create_client_http_options_defaults(mocker):
     from greycloud.auth import create_client
 
@@ -476,6 +478,7 @@ def test_create_client_http_options_defaults(mocker):
     assert http_opts.timeout == 1200000  # 1200s in ms
 
 
+@pytest.mark.auth
 def test_create_client_http_options_timeout_none(mocker):
     from greycloud.auth import create_client
 
@@ -492,6 +495,7 @@ def test_create_client_http_options_timeout_none(mocker):
     assert http_opts.timeout is None
 
 
+@pytest.mark.auth
 def test_create_client_with_api_key_http_options_timeout(tmp_path, mocker):
     from greycloud.auth import create_client
 
