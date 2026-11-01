@@ -1,5 +1,6 @@
 """Unit tests for GreyCloudClient"""
 
+import asyncio
 import dataclasses
 
 import pytest
@@ -368,6 +369,100 @@ class TestGreyCloudClient:
                 )
             )
             assert chunks == ["Here is the answer"]
+
+    def test_stream_on_thought_callback_accepts_coroutine_function(
+        self, sample_config, sample_contents
+    ):
+        """An async on_thought callback is driven instead of being dropped."""
+        part = MagicMock()
+        part.text = "I am thinking"
+        part.thought = True
+        chunk = MagicMock()
+        chunk.candidates = [MagicMock()]
+        chunk.candidates[0].content = MagicMock()
+        chunk.candidates[0].content.parts = [part]
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.return_value = [chunk]
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            captured = []
+
+            async def on_thought(text):
+                captured.append(text)
+
+            list(client.generate_content_stream(sample_contents, on_thought=on_thought))
+
+            assert captured == ["I am thinking"]
+
+    def test_stream_on_thought_callback_coroutine_inside_running_loop(
+        self, sample_config, sample_contents
+    ):
+        """Inside a running loop the coroutine is scheduled, not dropped."""
+        part = MagicMock()
+        part.text = "I am thinking"
+        part.thought = True
+        chunk = MagicMock()
+        chunk.candidates = [MagicMock()]
+        chunk.candidates[0].content = MagicMock()
+        chunk.candidates[0].content.parts = [part]
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.return_value = [chunk]
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            captured = []
+
+            async def on_thought(text):
+                captured.append(text)
+
+            async def scenario():
+                list(
+                    client.generate_content_stream(
+                        sample_contents, on_thought=on_thought
+                    )
+                )
+                await asyncio.sleep(0)
+
+            asyncio.run(scenario())
+
+            assert captured == ["I am thinking"]
+
+    def test_stream_on_thought_callback_async_failure_is_logged(
+        self, sample_config, sample_contents, caplog
+    ):
+        """A failing async callback must not break the stream."""
+        part = MagicMock()
+        part.text = "I am thinking"
+        part.thought = True
+        chunk = MagicMock()
+        chunk.candidates = [MagicMock()]
+        chunk.candidates[0].content = MagicMock()
+        chunk.candidates[0].content.parts = [part]
+
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content_stream.return_value = [chunk]
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+
+            async def on_thought(text):
+                raise RuntimeError("callback crash")
+
+            with caplog.at_level("WARNING"):
+                chunks = list(
+                    client.generate_content_stream(
+                        sample_contents, on_thought=on_thought
+                    )
+                )
+
+            assert chunks == []
+            assert "on_thought callback failed" in caplog.text
 
     def test_generate_content_stream_request_timeout(
         self, sample_config, sample_contents

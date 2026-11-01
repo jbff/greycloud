@@ -2,6 +2,7 @@
 Main GreyCloud client for content generation and interaction
 """
 
+import asyncio
 import logging
 import time
 import random
@@ -24,6 +25,35 @@ from .grounding import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _invoke_thought_callback(on_thought: Callable[[str], Any], text: str) -> None:
+    """Invoke a sync ``on_thought`` callback, never raising.
+
+    A coroutine-function callback is driven to completion with ``asyncio.run``
+    when no loop is running in this thread. Inside a running loop the
+    coroutine is scheduled on that loop with a done-callback that logs
+    failures: calling it and discarding the coroutine would both drop the
+    thought and emit a "coroutine was never awaited" warning.
+    """
+    try:
+        result = on_thought(text)
+        if result is not None and asyncio.iscoroutine(result):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No loop in this thread: drive to completion inline.
+                asyncio.run(result)
+            else:
+
+                def _log_task_failure(task: "asyncio.Task") -> None:
+                    if task.cancelled() or task.exception() is None:
+                        return
+                    logger.warning("on_thought callback failed: %s", task.exception())
+
+                loop.create_task(result).add_done_callback(_log_task_failure)
+    except Exception as e:  # noqa: BLE001 - callback must never break generation
+        logger.warning("on_thought callback failed: %s", e)
 
 
 class GreyCloudClient:
@@ -862,10 +892,7 @@ class GreyCloudClient:
 
                 if is_thought:
                     if on_thought:
-                        try:
-                            on_thought(text)
-                        except Exception as e:
-                            logger.warning("on_thought callback failed: %s", e)
+                        _invoke_thought_callback(on_thought, text)
                     if return_events:
                         yield {"thought": text}
                 else:
