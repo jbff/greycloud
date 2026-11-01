@@ -401,7 +401,15 @@ class GreyCloudClient:
             request_timeout = kwargs.pop("request_timeout")
         final_http_options = http_options
         if request_timeout is not None:
-            final_http_options = types.HttpOptions(timeout=request_timeout * 1000)
+            timeout_ms = request_timeout * 1000
+            if final_http_options is not None:
+                # Merge: keep caller headers/retry_options while applying the
+                # per-call deadline.
+                final_http_options = final_http_options.model_copy(
+                    update={"timeout": timeout_ms}
+                )
+            else:
+                final_http_options = types.HttpOptions(timeout=timeout_ms)
         elif final_http_options is None and "http_options" in kwargs:
             final_http_options = kwargs.pop("http_options")
 

@@ -363,6 +363,34 @@ class TestGreyCloudClient:
             assert config.http_options is not None
             assert config.http_options.timeout == 60000
 
+    def test_generate_content_request_timeout_merges_http_options(
+        self, sample_config, sample_contents, mock_generate_response
+    ):
+        """A per-call timeout must not discard the caller's other options."""
+        with patch("greycloud.client.create_client") as mock_create:
+            mock_genai_client = MagicMock()
+            mock_genai_client.models.generate_content.return_value = (
+                mock_generate_response
+            )
+            mock_create.return_value = mock_genai_client
+
+            client = GreyCloudClient(sample_config)
+            client.generate_content(
+                sample_contents,
+                request_timeout=30,
+                http_options=types.HttpOptions(
+                    headers={"x-goog-user-project": "billing-project"},
+                    base_url="https://example.test",
+                ),
+            )
+
+            config = mock_genai_client.models.generate_content.call_args[1]["config"]
+            assert config.http_options.timeout == 30000
+            assert config.http_options.headers == {
+                "x-goog-user-project": "billing-project"
+            }
+            assert config.http_options.base_url == "https://example.test"
+
     def test_count_tokens(self, sample_config, sample_contents):
         """Test token counting"""
         with patch("greycloud.client.create_client") as mock_create:

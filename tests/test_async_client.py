@@ -498,6 +498,38 @@ class TestGreyCloudAsyncClientGenerate:
             assert cfg.http_options.timeout == 55000
 
     @pytest.mark.asyncio
+    async def test_generate_content_request_timeout_merges_http_options(
+        self, async_sample_config, mock_async_genai_client
+    ):
+        """A per-call timeout must not discard the caller's other options."""
+        mock_async_genai_client.aio.models.generate_content.return_value = MagicMock()
+
+        with patch(
+            "greycloud.async_client.create_client", return_value=mock_async_genai_client
+        ):
+            client = GreyCloudAsyncClient(async_sample_config)
+            contents = [
+                types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
+            ]
+            await client.generate_content(
+                contents,
+                request_timeout=30,
+                http_options=types.HttpOptions(
+                    headers={"x-goog-user-project": "billing-project"},
+                    base_url="https://example.test",
+                ),
+            )
+
+            cfg = mock_async_genai_client.aio.models.generate_content.call_args[1][
+                "config"
+            ]
+            assert cfg.http_options.timeout == 30000
+            assert cfg.http_options.headers == {
+                "x-goog-user-project": "billing-project"
+            }
+            assert cfg.http_options.base_url == "https://example.test"
+
+    @pytest.mark.asyncio
     async def test_generate_content_reconciles_usage(
         self, async_sample_config, mock_async_genai_client
     ):
