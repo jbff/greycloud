@@ -6,7 +6,11 @@ limits to stay within Vertex AI quotas.
 """
 
 import asyncio
+import logging
+
 from aiolimiter import AsyncLimiter
+
+logger = logging.getLogger(__name__)
 
 
 class VertexRateLimiter:
@@ -58,10 +62,28 @@ class VertexRateLimiter:
             return await api_call_coro
 
     async def reconcile_usage(self, estimated_tokens: int, actual_tokens: int) -> None:
-        """Reconcile actual token consumption (including thoughts) with TPM bucket."""
+        """Reconcile actual token consumption (including thoughts) with TPM bucket.
+
+        Best-effort: when the bucket is already depleted this never waits for
+        the next refill window (up to 60s), and a failure is logged rather
+        than raised — reconciliation runs after a successful response and
+        inside the stream ``finally``, where raising would replace the real
+        result/error.
+        """
         delta = actual_tokens - estimated_tokens
-        if delta > 0:
-            await self._tpm_limiter.acquire(min(delta, self.tpm))
+        if delta <= 0:
+            return
+        amount = min(delta, self.tpm)
+        try:
+            if not self._tpm_limiter.has_capacity(amount):
+                logger.warning(
+                    "TPM bucket depleted; skipping reconciliation of %d tokens",
+                    amount,
+                )
+                return
+            await self._tpm_limiter.acquire(amount)
+        except Exception as e:  # noqa: BLE001 - reconciliation must never break a call
+            logger.warning("TPM reconciliation failed: %s", e)
 
     @staticmethod
     def estimate_tokens(text: str) -> int:

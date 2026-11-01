@@ -180,3 +180,29 @@ class TestVertexRateLimiterReconcileUsage:
         # Delta is 299,000 > tpm (100,000)
         await limiter.reconcile_usage(estimated_tokens=1000, actual_tokens=300_000)
         assert acquired == [100_000]
+
+    @pytest.mark.asyncio
+    async def test_reconcile_usage_does_not_block_when_bucket_depleted(self):
+        """Reconciliation is best-effort; a drained bucket must not stall."""
+        limiter = VertexRateLimiter(rpm=60, tpm=1000)
+        await limiter.call_with_limits(1000, AsyncMock(return_value="x")())
+
+        # A full refill window would be 60s; this must return promptly.
+        await asyncio.wait_for(
+            limiter.reconcile_usage(estimated_tokens=0, actual_tokens=500),
+            timeout=0.1,
+        )
+
+    @pytest.mark.asyncio
+    async def test_reconcile_usage_swallows_acquire_errors(self, monkeypatch):
+        """A reconciliation failure must not mask the underlying call/stream."""
+        limiter = VertexRateLimiter(rpm=60, tpm=1000)
+        monkeypatch.setattr(
+            type(limiter._tpm_limiter), "has_capacity", lambda self, amount: True
+        )
+
+        async def boom(amount=1):
+            raise RuntimeError("bucket error")
+
+        monkeypatch.setattr(type(limiter._tpm_limiter), "acquire", boom)
+        await limiter.reconcile_usage(estimated_tokens=0, actual_tokens=500)
