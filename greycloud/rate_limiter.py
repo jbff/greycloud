@@ -70,7 +70,10 @@ class VertexRateLimiter:
         inside the stream ``finally``, where raising would replace the real
         result/error.
         """
-        delta = actual_tokens - estimated_tokens
+        # The bucket was charged min(estimate, tpm) at acquire time (see the
+        # clamp in call_with_limits), so the new information for the bucket is
+        # the difference from the clamped charge, not from the raw estimate.
+        delta = actual_tokens - min(estimated_tokens, self.tpm)
         if delta <= 0:
             return
         amount = min(delta, self.tpm)

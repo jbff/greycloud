@@ -206,3 +206,46 @@ class TestVertexRateLimiterReconcileUsage:
 
         monkeypatch.setattr(type(limiter._tpm_limiter), "acquire", boom)
         await limiter.reconcile_usage(estimated_tokens=0, actual_tokens=500)
+
+
+class TestReconcileAgainstClampedCharge:
+    """F14: reconciliation must measure against what the bucket was
+    actually charged — min(estimate, tpm) — not the raw estimate."""
+
+    @pytest.mark.asyncio
+    async def test_delta_measured_from_clamped_charge(self, monkeypatch):
+        """estimate 150 > tpm 100 charges 100; actual 160 owes a 60 delta,
+        not 160 - 150 = 10."""
+        import aiolimiter
+
+        acquired = []
+        real_acquire = aiolimiter.AsyncLimiter.acquire
+
+        async def spy_acquire(self, amount=1):
+            acquired.append(amount)
+            await real_acquire(self, amount)
+
+        monkeypatch.setattr(aiolimiter.AsyncLimiter, "acquire", spy_acquire)
+        limiter = VertexRateLimiter(rpm=60, tpm=100)
+        # The bucket was charged min(150, 100) = 100 at acquire time.
+        await limiter.reconcile_usage(estimated_tokens=150, actual_tokens=160)
+        assert acquired == [60]
+
+    @pytest.mark.asyncio
+    async def test_no_delta_when_actual_le_clamped_charge(self, monkeypatch):
+        """actual <= min(estimate, tpm) acquires nothing even when
+        actual > estimate is impossible... i.e. reconcile is a no-op."""
+        import aiolimiter
+
+        acquired = []
+        real_acquire = aiolimiter.AsyncLimiter.acquire
+
+        async def spy_acquire(self, amount=1):
+            acquired.append(amount)
+            await real_acquire(self, amount)
+
+        monkeypatch.setattr(aiolimiter.AsyncLimiter, "acquire", spy_acquire)
+        limiter = VertexRateLimiter(rpm=60, tpm=100)
+        # Estimate clamped to 100; actual 100 -> delta 0.
+        await limiter.reconcile_usage(estimated_tokens=150, actual_tokens=100)
+        assert acquired == []
