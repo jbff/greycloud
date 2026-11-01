@@ -2849,3 +2849,50 @@ class TestPerCallRequestTimeoutValidationAsync:
             client = GreyCloudAsyncClient(async_sample_config)
         with pytest.raises(exc, match=match):
             client._build_generate_config(model="gemini-3.8-flash", request_timeout=bad)
+
+
+class TestToolUseTokensInFallbackSum:
+    """F13: the usage fallback sum must include tool-use prompt tokens."""
+
+    def test_dict_path_sums_tool_use_tokens(self, async_sample_config):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        usage = {
+            "prompt_token_count": 10,
+            "candidates_token_count": 20,
+            "thoughts_token_count": 5,
+            "tool_use_prompt_token_count": 7,
+        }
+        assert client._extract_total_tokens(usage) == 42
+
+    def test_dict_camel_path_sums_tool_use_tokens(self, async_sample_config):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        usage = {
+            "promptTokenCount": 10,
+            "candidatesTokenCount": 20,
+            "thoughtsTokenCount": 5,
+            "toolUsePromptTokenCount": 7,
+        }
+        assert client._extract_total_tokens(usage) == 42
+
+    def test_object_path_sums_tool_use_tokens(self, async_sample_config):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        usage = MagicMock()
+        usage.total_token_count = None
+        usage.prompt_token_count = 10
+        usage.candidates_token_count = 20
+        usage.thoughts_token_count = 5
+        usage.tool_use_prompt_token_count = 7
+        assert client._extract_total_tokens(usage) == 42
+
+    def test_missing_tool_use_field_still_sums(self, async_sample_config):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        usage = {
+            "prompt_token_count": 10,
+            "candidates_token_count": 20,
+            "thoughts_token_count": 5,
+        }
+        assert client._extract_total_tokens(usage) == 35

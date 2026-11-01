@@ -213,11 +213,16 @@ class GreyCloudAsyncClient:
                     or usage_metadata.get("thoughtsTokenCount")
                     or 0
                 )
+                tool_use = (
+                    usage_metadata.get("tool_use_prompt_token_count")
+                    or usage_metadata.get("toolUsePromptTokenCount")
+                    or 0
+                )
                 if all(
                     isinstance(x, int) and not isinstance(x, bool)
-                    for x in (prompt, candidates, thoughts)
+                    for x in (prompt, candidates, thoughts, tool_use)
                 ):
-                    summed = prompt + candidates + thoughts
+                    summed = prompt + candidates + thoughts + tool_use
                     total = summed if summed > 0 else None
         else:
             total = getattr(usage_metadata, "total_token_count", None)
@@ -225,11 +230,16 @@ class GreyCloudAsyncClient:
                 prompt = getattr(usage_metadata, "prompt_token_count", 0) or 0
                 candidates = getattr(usage_metadata, "candidates_token_count", 0) or 0
                 thoughts = getattr(usage_metadata, "thoughts_token_count", 0) or 0
+                tool_use = (
+                    getattr(usage_metadata, "tool_use_prompt_token_count", 0)
+                    or getattr(usage_metadata, "toolUsePromptTokenCount", 0)
+                    or 0
+                )
                 if all(
                     isinstance(x, int) and not isinstance(x, bool)
-                    for x in (prompt, candidates, thoughts)
+                    for x in (prompt, candidates, thoughts, tool_use)
                 ):
-                    summed = prompt + candidates + thoughts
+                    summed = prompt + candidates + thoughts + tool_use
                     total = summed if summed > 0 else None
 
         if isinstance(total, int) and not isinstance(total, bool) and total > 0:
