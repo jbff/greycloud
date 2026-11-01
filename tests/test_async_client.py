@@ -1171,12 +1171,6 @@ class TestGreyCloudAsyncClientRetry:
             contents = [
                 types.Content(role="user", parts=[types.Part.from_text(text="Hi")])
             ]
-            stream = await client.generate_with_retry(
-                contents,
-                streaming=True,
-                model="gemini-4-argon",
-                thinking_level="MINIMAL",
-            )
             with (
                 patch(
                     "greycloud.async_client.asearch_sources", new_callable=AsyncMock
@@ -1185,9 +1179,15 @@ class TestGreyCloudAsyncClientRetry:
                     "greycloud.async_client.asyncio.sleep", new_callable=AsyncMock
                 ) as mock_sleep,
             ):
+                # F7: the ValueError must fire on the await itself, before any
+                # async-generator body runs on the caller's first __anext__.
                 with pytest.raises(ValueError, match="MINIMAL"):
-                    async for _ in stream:
-                        pass
+                    await client.generate_with_retry(
+                        contents,
+                        streaming=True,
+                        model="gemini-4-argon",
+                        thinking_level="MINIMAL",
+                    )
                 mock_search.assert_not_awaited()
                 mock_sleep.assert_not_awaited()
 
@@ -2651,3 +2651,23 @@ class TestNonG4IncludeThoughtsOmittedAsync:
 
         with pytest.raises(TypeError):
             GreyCloudConfig(include_thoughts="yes")  # type: ignore[arg-type]
+
+
+class TestValidateBeforeStreamGeneratorReturnedAsync:
+    """F7: generate_with_retry(streaming=True) must raise config errors on
+    THE call, not on first __anext__."""
+
+    @pytest.mark.asyncio
+    async def test_async_stream_call_raises_value_error(
+        self, async_sample_config, sample_contents
+    ):
+        with patch("greycloud.async_client.create_client"):
+            client = GreyCloudAsyncClient(async_sample_config)
+        with pytest.raises(ValueError):
+            await client.generate_with_retry(
+                sample_contents,
+                streaming=True,
+                model="gemini-4-argon",
+                thinking_level="MINIMAL",
+                max_retries=3,
+            )

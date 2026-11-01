@@ -1085,6 +1085,12 @@ class GreyCloudClient:
         Returns:
             GenerateContentResponse (if streaming=False) or Generator[Union[str, Dict[str, str], types.GenerateContentResponse], None, None] (if streaming=True)
         """
+        # Surface deterministic config errors on the call itself, before the
+        # streaming branch returns a generator: a generator body runs on the
+        # caller's first next(), outside their try/except, and with grounding
+        # enabled every attempt would otherwise run a billed search first.
+        self._validate_generate_config(request_timeout, generate_kwargs)
+
         if streaming:
             return self._generate_with_retry_stream(
                 contents,

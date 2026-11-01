@@ -949,6 +949,12 @@ class GreyCloudAsyncClient:
         Returns:
             GenerateContentResponse (if streaming=False) or AsyncGenerator (if streaming=True)
         """
+        # Surface deterministic config errors on the await itself, before the
+        # streaming branch returns an async generator: the generator body runs
+        # on the caller's first __anext__, outside their try/except, and with
+        # grounding enabled every attempt would otherwise run a billed search.
+        self._validate_generate_config(request_timeout, generate_kwargs)
+
         if streaming:
             return self._generate_with_retry_stream(
                 contents,

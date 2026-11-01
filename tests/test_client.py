@@ -1066,18 +1066,19 @@ class TestGreyCloudClient:
             mock_create.return_value = MagicMock()
             client = GreyCloudClient(sample_config)
 
-            stream = client.generate_with_retry(
-                sample_contents,
-                streaming=True,
-                model="gemini-4-argon",
-                thinking_level="MINIMAL",
-            )
             with (
                 patch("greycloud.client.search_sources") as mock_search,
                 patch("greycloud.client.time.sleep") as mock_sleep,
             ):
+                # F7: the ValueError must fire on the CALL itself, before any
+                # generator body runs on the caller's first next().
                 with pytest.raises(ValueError, match="MINIMAL"):
-                    next(stream)
+                    client.generate_with_retry(
+                        sample_contents,
+                        streaming=True,
+                        model="gemini-4-argon",
+                        thinking_level="MINIMAL",
+                    )
                 mock_search.assert_not_called()
                 mock_sleep.assert_not_called()
 
@@ -2522,3 +2523,22 @@ class TestNonG4IncludeThoughtsOmitted:
     def test_config_bool_validation_still_enforced(self, sample_config):
         with pytest.raises(TypeError):
             GreyCloudConfig(include_thoughts="yes")  # type: ignore[arg-type]
+
+
+class TestValidateBeforeStreamGeneratorReturned:
+    """F7: generate_with_retry(streaming=True) must raise config errors on
+    THE CALL, not on first next() — the caller cannot try/except a generator
+    body that runs later."""
+
+    def test_sync_stream_call_raises_value_error(self, sample_config, sample_contents):
+        with patch("greycloud.client.create_client"):
+            client = GreyCloudClient(sample_config)
+        with pytest.raises(ValueError):
+            # The call itself — NOT iterating the returned generator.
+            client.generate_with_retry(
+                sample_contents,
+                streaming=True,
+                model="gemini-4-argon",
+                thinking_level="MINIMAL",
+                max_retries=3,
+            )
