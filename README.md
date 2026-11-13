@@ -535,7 +535,8 @@ Note: `create_client` never spawns an interactive `gcloud auth application-defau
 **Breaking:** Python 3.11+ is now required (previously 3.10), matching
 `google-genai` 2.34+. Stay on `greycloud<0.5` if you need Python 3.10.
 
-- **Gemini 4 support** (`gemini-4-argon`, codename `carbon`): sampling
+- **Gemini 4 support** (`gemini-4-argon`; the higher-tier `gemini-4-carbon`
+  reached GA on 2026-11-10 with the same request contract): sampling
   parameters (`temperature`, `top_p`, `top_k`) and penalties are dropped,
   `thinking_level` (`LOW`/`MEDIUM`/`HIGH`, default `MEDIUM`) replaces
   `thinking_budget`, and explicit `cached_content` / `GreyCloudCache` usage is
