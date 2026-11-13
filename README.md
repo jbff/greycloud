@@ -49,11 +49,6 @@ offers that GreyCloud does **not** implement:
   that. Google's `google-genai >= 2.34` SDK (GreyCloud's own floor) already
   exposes `client.interactions.*` with automatic hop continuation should you
   need it directly.
-- **`gemini-4-carbon-cyber-permissive`.** The allowlist-only "Fairwind"
-  defensive-security variant (default thinking `HIGH`, served only in
-  `global`/`us` regions, no computer use) passes through as an ordinary
-  Gemini 4 model. GreyCloud adds no special handling — access itself is
-  granted by Google, not configured client-side.
 
 ---
 
