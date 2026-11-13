@@ -31,6 +31,30 @@ High-level capabilities:
 - **Vertex AI Search integration** via a simple flag and datastore string
 - **Batch processing** to upload files, create jobs, monitor, and download results
 
+### Gemini 4 carbon coverage note
+
+GreyCloud treats `gemini-4-argon` and `gemini-4-carbon` (GA 2026-11-10, sits
+above argon) as one Gemini 4 family with the full request contract: parameter
+sanitization, `thinking_level`-only configuration, thought streaming, and
+implicit-cache-only guardrails all apply automatically. Capabilities carbon
+offers that GreyCloud does **not** implement:
+
+- **Long decodes beyond one response segment.** Carbon can produce up to
+  ~1M output tokens via the Interactions API: `background: true` server-managed
+  execution (24-hour cap, poll-only — no streamed events) or foreground
+  `stream: true` with `continuation_token`/`previous_interaction_id` chaining
+  32K (non-streaming) / 64K (streaming) segments. GreyCloud generation is
+  request/response only: `max_output_tokens` (default 65,535) is the per-call
+  ceiling, and the async client's 20-minute default `request_timeout` reflects
+  that. Google's `google-genai >= 2.34` SDK (GreyCloud's own floor) already
+  exposes `client.interactions.*` with automatic hop continuation should you
+  need it directly.
+- **`gemini-4-carbon-cyber-permissive`.** The allowlist-only "Fairwind"
+  defensive-security variant (default thinking `HIGH`, served only in
+  `global`/`us` regions, no computer use) passes through as an ordinary
+  Gemini 4 model. GreyCloud adds no special handling — access itself is
+  granted by Google, not configured client-side.
+
 ---
 
 ## 2. Why Use GreyCloud Instead of `google-genai` Directly?
